@@ -1,0 +1,19 @@
+{
+    "name": "ettoredn/php-object-storage",
+    "require-dev": {
+        "phpunit/phpunit": "^5.4"
+    },
+    "authors": [
+        {
+            "name": "Ettore Del Negro",
+            "email": "ettore@ettoredelnegro.me"
+        }
+    ],
+    "license": "ISC",
+    "autoload": {
+        "psr-4": { "EttoreDN\\PHPObjectStorage\\": "src/" }
+    },
+    "require": {
+        "php-opencloud/openstack": "^2.0"
+    }
+}
