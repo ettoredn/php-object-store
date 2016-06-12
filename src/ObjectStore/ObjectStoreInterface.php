@@ -22,22 +22,24 @@ interface ObjectStoreInterface extends \Countable
     function upload(string $name, $content, bool $overwrite = true);
 
     /**
-     * @param array $files
-     * @param array $options
+     * @param \SplFileInfo $archive
+     * @param string $format
+     * @param string $uploadPath
+     * @return
      */
-    function uploadBulk(array $files, array $options);
+    function uploadArchive(\SplFileInfo $archive, string $format, string $uploadPath = '');
 
     /**
-     * @param string|null $objectName
+     * @param string $name
      * @return string
      */
-    function getObjectUrl(string $objectName);
+    function download(string $name): string;
 
     /**
-     * @param string $objectName
+     * @param string $name
      * @return mixed
      */
-    function delete(string $objectName);
+    function delete(string $name): bool;
 
     /**
      * @param string $prefix

@@ -5,10 +5,9 @@ namespace EttoreDN\PHPObjectStorage\ObjectStore;
 
 use EttoreDN\PHPObjectStorage\Exception\ObjectStoreException;
 use GuzzleHttp\Client;
+use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Psr7\Request;
-use OpenCloud\Common\Transport\HandlerStack;
-use OpenStack\Identity\v2\Models\Token;
-use OpenStack\Identity\v2\Service;
+use GuzzleHttp\Psr7\Stream;
 
 /**
  * Class SwiftObjectStore
@@ -71,49 +70,88 @@ class SwiftObjectStore implements ObjectStoreInterface
 
     /**
      * @param string $name
-     * @return boolean
+     * @return bool
+     * @throws GuzzleException
+     * @throws ObjectStoreException
      */
     function exists(string $name): bool
     {
-        // TODO: Implement exists() method.
+        try {
+            $this->getClient()->head($name);
+            return true;
+        } catch (GuzzleException $e) {
+            if ($e->getCode() == 404)
+                return false;
+            throw $e;
+        }
     }
 
     /**
      * @param string $name
-     * @param mixed $content
+     * @param string|resource $content
      * @param bool $overwrite
      * @return mixed
+     * @throws ObjectStoreException
      */
     function upload(string $name, $content, bool $overwrite = true)
     {
-        // TODO: Implement upload() method.
+        $headers = [];
+
+        if (is_string($content))
+            $headers['Etag'] = hash('md5', $content);
+
+        $this->getClient()->put($name, [
+            'headers'=> $headers,
+            'body' => $content
+        ]);
     }
 
     /**
-     * @param array $files
-     * @param array $options
+     * @param \SplFileInfo $archive
+     * @param string $format Accepted formats are tar, tar.gz, and tar.bz2.
+     * @param string $uploadPath
+     * @throws ObjectStoreException
      */
-    function uploadBulk(array $files, array $options)
+    function uploadArchive(\SplFileInfo $archive, string $format, string $uploadPath = '')
     {
-        // TODO: Implement uploadBulk() method.
+        $allowedFormats = ['tar', 'tar.gz', 'tar.bz2'];
+        if (!in_array($format, $allowedFormats))
+            throw new ObjectStoreException(sprintf('Unsupported format %s: supported formats %s', $format, join(', ', $allowedFormats)));
+        
+        if (!$archive->isFile())
+            throw new ObjectStoreException(sprintf('Expecting %s to be a regular file', $archive->getPathname()));
+
+        $this->getClient()->put($uploadPath, [
+            'query'=> ['extract-archive' => $format], 
+            'body' => new Stream(fopen($archive->getPathname(), 'r'))
+        ]);
     }
 
     /**
-     * @param string|null $objectName
+     * @param string $name
      * @return string
      */
-    function getObjectUrl(string $objectName)
+    function download(string $name): string
     {
-        // TODO: Implement getObjectUrl() method.
+        return $this->getClient()->get($name)->getBody();
     }
 
     /**
-     * @param string $objectName
+     * @param string $name
      * @return mixed
+     * @throws GuzzleException
+     * @throws ObjectStoreException
      */
-    function delete(string $objectName)
+    function delete(string $name): bool
     {
-        // TODO: Implement delete() method.
+        try {
+            $this->getClient()->delete($name);
+            return true;
+        } catch (GuzzleException $e) {
+            if ($e->getCode() != 404)
+                throw $e;
+            return false;
+        }
     }
 
     /**
@@ -160,7 +198,7 @@ class SwiftObjectStore implements ObjectStoreInterface
         if (empty($this->container))
             throw new ObjectStoreException('Container must be given in constructor');
 
-        $baseUri = sprintf('%s/%s', $this->getEndpoint(), $this->container);
+        $baseUri = sprintf('%s/%s/', $this->getEndpoint(), $this->container);
         return $this->getAuthenticatedClient(['base_uri' => $baseUri]);
     }
 
@@ -247,6 +285,8 @@ class SwiftObjectStore implements ObjectStoreInterface
         $r = $this->getClient()->head('');
         return intval($r->getHeader('X-Container-Object-Count'));
     }
+
+
 }
 
 

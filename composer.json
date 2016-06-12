@@ -14,6 +14,7 @@
         "psr-4": { "EttoreDN\\PHPObjectStorage\\": "src/" }
     },
     "require": {
-        "php-opencloud/openstack": "^2.0"
+        "php-opencloud/openstack": "^2.0",
+        "monolog/monolog": "^1.19"
     }
 }
