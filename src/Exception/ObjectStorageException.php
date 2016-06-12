@@ -1,7 +1,7 @@
 <?php
 
 
-namespace EttoreDN\PHPObjectStorage;
+namespace EttoreDN\PHPObjectStorage\Exception;
 
 
 class ObjectStorageException extends \Exception

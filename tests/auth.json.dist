@@ -1,0 +1,11 @@
+{
+  "swift": {
+    "username": "",
+    "password": "",
+    "tenantId": "",
+    "tenantName": "",
+    "region": "SBG1",
+    "authUrl": "https://auth.cloud.ovh.net/v2.0/",
+    "container": "media"
+  }
+}

@@ -1,4 +1,5 @@
 /vendor/
+/tests/auth.json
 phpunit.phar
 composer.lock
 

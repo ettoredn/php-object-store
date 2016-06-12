@@ -6,7 +6,7 @@
  * Time: 20:47
  */
 
-namespace EttoreDN\PHPObjectStorage;
+namespace EttoreDN\PHPObjectStorage\Exception;
 
 
 class ObjectStoreException extends \Exception
