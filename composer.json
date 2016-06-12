@@ -1,6 +1,6 @@
 {
     "name": "ettoredn/php-object-storage",
-    "description": "PHP stream wrappers and OO utilities to managed files on object stores",
+    "description": "PHP stream wrappers and utilities to manage files on object stores",
     "require-dev": {
         "phpunit/phpunit": "^5.4"
     },

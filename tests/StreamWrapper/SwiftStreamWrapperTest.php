@@ -1,6 +1,6 @@
 <?php
 
-namespace PHPObjectStorageTest\ObjectStore;
+namespace PHPObjectStorage\Test\ObjectStore;
 
 use EttoreDN\PHPObjectStorage\ObjectStorage;
 use EttoreDN\PHPObjectStorage\Exception\ObjectStoreException;
