@@ -56,7 +56,6 @@ class SwiftObjectStorageTest extends \PHPUnit_Framework_TestCase
     }
     
     public function testDelete() {
-        $this->markTestIncomplete();
         $this->assertFalse(self::$store->delete(time() . rand()));
     }
 
