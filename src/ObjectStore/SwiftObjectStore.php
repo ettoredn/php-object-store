@@ -10,12 +10,24 @@ use OpenCloud\Common\Transport\HandlerStack;
 use OpenStack\Identity\v2\Models\Token;
 use OpenStack\Identity\v2\Service;
 
+/**
+ * Class SwiftObjectStore
+ * @package EttoreDN\PHPObjectStorage\ObjectStore
+ *
+ * @property $container Must be specified before any invocation of getClient()
+ */
 class SwiftObjectStore implements ObjectStoreInterface
 {
     /**
      * @var Token
      */
     protected $token;
+    public function getTokenId(): string {
+        if (!$this->token || $this->token->hasExpired())
+            $this->authenticate();
+
+        return $this->token->getId();
+    }
 
     /**
      * @var array
@@ -26,20 +38,7 @@ class SwiftObjectStore implements ObjectStoreInterface
      * @var string
      */
     protected $endpoint;
-
-    public function __construct(array $options = [])
-    {
-        $this->options = $options;
-    }
-
-    /**
-     * Returns the REST endpoint.
-     * @return string
-     * @internal param string $region
-     * @internal param string $urlType
-     */
-    public function getEndpoint(): string
-    {
+    public function getEndpoint(): string {
         if (!$this->endpoint)
             $this->authenticate();
 
@@ -47,18 +46,147 @@ class SwiftObjectStore implements ObjectStoreInterface
     }
 
     /**
-     * @return string
+     * @var string
      */
-    public function getTokenId(): string
-    {
-        if (!$this->token || $this->token->hasExpired())
-            $this->authenticate();
-
-        return $this->token->getId();
+    protected $container;
+    public function getContainer(): string {
+        return $this->container;
+    }
+    public function setContainer(string $name) {
+        return $this->container = $name;
     }
 
     /**
-     * Refreshes the token.
+     * SwiftObjectStore constructor.
+     * @param array $options
+     * @throws ObjectStoreException
+     */
+    public function __construct(array $options = [])
+    {
+        $this->options = $options;
+
+        if (array_key_exists('container', $options))
+            $this->setContainer($options['container']);
+    }
+
+    /**
+     * @param string $name
+     * @return boolean
+     */
+    function exists(string $name): bool
+    {
+        // TODO: Implement exists() method.
+    }
+
+    /**
+     * @param string $name
+     * @param mixed $content
+     * @param bool $overwrite
+     * @return mixed
+     */
+    function upload(string $name, $content, bool $overwrite = true)
+    {
+        // TODO: Implement upload() method.
+    }
+
+    /**
+     * @param array $files
+     * @param array $options
+     */
+    function uploadBulk(array $files, array $options)
+    {
+        // TODO: Implement uploadBulk() method.
+    }
+
+    /**
+     * @param string|null $objectName
+     * @return string
+     */
+    function getObjectUrl(string $objectName)
+    {
+        // TODO: Implement getObjectUrl() method.
+    }
+
+    /**
+     * @param string $objectName
+     * @return mixed
+     */
+    function delete(string $objectName)
+    {
+        // TODO: Implement delete() method.
+    }
+
+    /**
+     * @param string $prefix
+     * @param int $limit
+     * @return array
+     */
+    function listObjectNames(string $prefix = '', int $limit = 0): array
+    {
+        $hasLimit = $limit > 0;
+        $names = [];
+        $marker = '';
+
+        do {
+            $results = 0;
+            foreach ($this->_listNames($prefix, $limit, $marker) as $name) {
+                $names[] = $name;
+
+                $results++;
+                $marker = $name;
+
+                if ($hasLimit && count($names) >= $limit)
+                    break;
+            }
+        } while ($results > 0 && (!$hasLimit || count($names) < $limit));
+
+        return $names;
+    }
+
+    /**
+     * Returns a client to use for endpoint requests.
+     * @param array $defaults
+     * @return Client
+     */
+    function getAuthenticatedClient(array $defaults = []): Client
+    {
+        return new Client($defaults + [
+                'headers' => ['X-Auth-Token' => $this->getTokenId()]
+            ]);
+    }
+
+    protected function getClient(): Client
+    {
+        if (empty($this->container))
+            throw new ObjectStoreException('Container must be given in constructor');
+
+        $baseUri = sprintf('%s/%s', $this->getEndpoint(), $this->container);
+        return $this->getAuthenticatedClient(['base_uri' => $baseUri]);
+    }
+
+    private function _listNames(string $prefix = '', int $limit = 0, string $marker = '', string $endMarker = ''): array
+    {
+        $client = $this->getClient();
+        $query = [];
+
+        if ($limit > 0)
+            $query['limit'] = $limit;
+        if (!empty($marker))
+            $query['marker'] = $marker;
+        if (!empty($endMarker))
+            $query['end_marker'] = $endMarker;
+
+
+        $resp = $client->get($prefix, ['query' => $query]);
+        $names = explode("\n", $resp->getBody()->getContents());
+        array_pop($names);
+        return $names;
+    }
+
+
+
+    /**
+     * Refreshes the token and sets the endpoint URL.
      * @return SwiftToken
      * @throws ObjectStoreException
      */
@@ -112,59 +240,12 @@ class SwiftObjectStore implements ObjectStoreInterface
     }
 
     /**
-     * @param string $name
-     * @return mixed
+     * @return int
      */
-    function exists(string $name)
+    public function count()
     {
-        // TODO: Implement exists() method.
-    }
-
-    /**
-     * @param string $name
-     * @param mixed $content
-     * @param bool $overwrite
-     * @return mixed
-     */
-    function upload(string $name, $content, bool $overwrite = true)
-    {
-        // TODO: Implement upload() method.
-    }
-
-    /**
-     * @param array $files
-     * @param array $options
-     */
-    function uploadBulk(array $files, array $options)
-    {
-        // TODO: Implement uploadBulk() method.
-    }
-
-    /**
-     * @param string|null $objectName
-     * @return string
-     */
-    function getObjectUrl(string $objectName)
-    {
-        // TODO: Implement getObjectUrl() method.
-    }
-
-    /**
-     * @param string $objectName
-     * @return mixed
-     */
-    function delete(string $objectName)
-    {
-        // TODO: Implement delete() method.
-    }
-
-    /**
-     * @param array $options
-     * @return array
-     */
-    function listObjects(array $options = [])
-    {
-        // TODO: Implement listObjects() method.
+        $r = $this->getClient()->head('');
+        return intval($r->getHeader('X-Container-Object-Count'));
     }
 }
 

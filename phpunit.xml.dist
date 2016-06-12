@@ -1,8 +1,11 @@
 <?xml version="1.0"?>
 <phpunit bootstrap="./vendor/autoload.php">
 
-<testsuite name="My test suite">
-    <directory>tests</directory>
+<testsuite name="Stream wrappers">
+    <directory>tests/StreamWrapper</directory>
+</testsuite>
+<testsuite name="Object stores">
+    <directory>tests/ObjectStore</directory>
 </testsuite>
 
 </phpunit>

@@ -4,36 +4,59 @@ namespace PHPObjectStorageTest\ObjectStore;
 
 use EttoreDN\PHPObjectStorage\ObjectStorage;
 use EttoreDN\PHPObjectStorage\Exception\ObjectStoreException;
+use EttoreDN\PHPObjectStorage\StreamWrapper\SwiftStreamWrapper;
 
-class ObjectStorageTest extends \PHPUnit_Framework_TestCase
+class SwiftStreamWrapperTest extends \PHPUnit_Framework_TestCase
 {
-    public function tearDown()
-    {
-        ObjectStorage::unregisterStreamWrapper(ObjectStorage::SWIFT);
-    }
+    const fixtureUrl = 'swift://test/swift-test.txt';
+    const fixtureContent = '012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789';
+    private static $fixtureSize;
 
-    /**
-     * @return \EttoreDN\PHPObjectStorage\ObjectStore\SwiftObjectStore
-     * @throws ObjectStoreException
-     */
-    private function getSwift()
-    {
+    /** @beforeClass */
+    public static function initFixture() {
         $options = [] + json_decode(file_get_contents(__DIR__ .'/../auth.json'), true)['swift'];
-        return ObjectStorage::getInstance(ObjectStorage::SWIFT, $options);
+        
+        ObjectStorage::registerStreamWrapper(SwiftStreamWrapper::class, $options);
+        self::$fixtureSize = strlen(self::fixtureContent);
     }
 
-    public function testRegisterStreamWrapper()
-    {
-        ObjectStorage::registerStreamWrapper(ObjectStorage::SWIFT);
+    /** @afterClass */
+    public static function removeFixture() {
+//        unlink(self::fixtureUrl);
+        ObjectStorage::unregisterStreamWrapper(SwiftStreamWrapper::class);
+    }
 
+    private function createFixture() {
+        $h = fopen(self::fixtureUrl, 'w');
+        $this->assertEquals(strlen(self::fixtureContent), fwrite($h, self::fixtureContent), 'should write 6 bytes');
+        fclose($h);
+    }
+
+
+    public function testRegisterStreamWrapper() {
         $this->assertContains('swift', stream_get_wrappers(), 'swift:// protocol not registered');
     }
-    
-    public function testSwiftWrapperRead()
-    {
-        ObjectStorage::registerStreamWrapper(ObjectStorage::SWIFT);
 
-        $h = fopen('swift://media_uploads/text.txt', 'r');
+    public function testSwiftWrapperWrite() {
+        $h = fopen('swift://test/swift-test-write.txt', 'w');
+
+        $this->assertEquals(6, fwrite($h, 'ettore'), 'should write 6 bytes');
+        fseek($h, 1, SEEK_SET);
+        $this->assertEquals(2, fwrite($h, 'TT'), 'should write 2 bytes');
+        $this->assertTrue(ftruncate($h, 4), 'cannot truncate');
+        $this->assertEquals(4, fstat($h)['size'], 'Length expected to be 4 after being truncated');
+        
+        fclose($h);
+    }
+    
+    public function testUnlink() {
+        $this->createFixture();
+        $this->assertTrue(unlink(self::fixtureUrl), 'unlink error');
+    }
+    
+    public function testSwiftWrapperRead() {
+        $this->createFixture();
+        $h = fopen(self::fixtureUrl, 'r');
 
         $read = fread($h, 5);
         $this->assertEquals('01234', $read);
@@ -44,7 +67,6 @@ class ObjectStorageTest extends \PHPUnit_Framework_TestCase
         $read = fread($h, 1);
         $this->assertEquals('1', $read);
 
-
         $this->assertEquals(0, fseek($h, 20, SEEK_SET));
         $read = fread($h, 10);
         $this->assertEquals('0123456789', $read);
@@ -54,34 +76,15 @@ class ObjectStorageTest extends \PHPUnit_Framework_TestCase
         fclose($h);
     }
 
-    public function testSwiftWrapperWrite()
-    {
-        ObjectStorage::registerStreamWrapper(ObjectStorage::SWIFT);
-
-        $h = fopen('swift://media_uploads/swift.txt', 'w');
-
-        $this->assertEquals(6, fwrite($h, 'ettore'), 'should write 6 bytes');
-        fseek($h, 1, SEEK_SET);
-        $this->assertEquals(2, fwrite($h, 'TT'), 'should write 2 bytes');
-        $this->assertTrue(ftruncate($h, 4), 'cannot truncate');
-        $this->assertEquals(4, fstat($h)['size'], 'Length expected to be 4 after being truncated');
-
-        fclose($h);
-
-        $this->assertTrue(unlink('swift://media_uploads/swift'), 'unlink error');
-    }
-
-    public function testSwiftWrapperAppend()
-    {
-        ObjectStorage::registerStreamWrapper(ObjectStorage::SWIFT);
-
-        $h = fopen('swift://media_uploads/swift.txt', 'a+');
+    public function testSwiftWrapperAppendPlus() {
+        $this->createFixture();
+        $h = fopen(self::fixtureUrl, 'a+');
 
         $this->assertEquals(2, fwrite($h, 're'), 'should write 2 bytes');
         fseek($h, 0, SEEK_SET);
-        $this->assertEquals('eT', fread($h, 2), 'should move the internal pointer for freads');
+        $this->assertEquals('01', fread($h, 2), 'should move the internal pointer for freads');
         $this->assertEquals(2, fwrite($h, 'dn'), 'should write 2 bytes');
-        $this->assertEquals(8, fstat($h)['size'], 'should ignore fseek when appending');
+        $this->assertEquals(self::$fixtureSize + 4, fstat($h)['size'], 'should ignore fseek when appending');
 
         fclose($h);
     }

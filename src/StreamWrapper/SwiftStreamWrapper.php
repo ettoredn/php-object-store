@@ -13,6 +13,13 @@ use GuzzleHttp\Psr7\Request;
 
 class SwiftStreamWrapper implements StreamWrapperInterface
 {
+    public $context;
+
+    /**
+     * @var array Used to retrieve object store options.
+     */
+    public static $options;
+
     /**
      * @var string
      */
@@ -84,13 +91,22 @@ class SwiftStreamWrapper implements StreamWrapperInterface
 
     public function __construct()
     {
-        $this->store = ObjectStorage::getInstance(SwiftObjectStore::class);
+        $this->store = ObjectStorage::getInstance(SwiftObjectStore::class, self::$options);
+    }
 
-        // Create HTTP client
-        $this->client = new Client([
-            'base_uri' => $this->store->getEndpoint() .'/',
-            'connect_timeout' => 30
-        ]);
+    /**
+     * @return Client
+     */
+    protected function getClient(): Client
+    {
+        if (!$this->client) {
+            $this->client = $this->store->getAuthenticatedClient([
+                'base_uri' => $this->store->getEndpoint() .'/',
+                'connect_timeout' => 30
+            ]);
+        }
+
+        return $this->client;
     }
 
     /**
@@ -99,9 +115,8 @@ class SwiftStreamWrapper implements StreamWrapperInterface
      */
     private function exists(): bool
     {
-        $request = new Request('HEAD', $this->pathname, ['X-Auth-Token' => $this->store->getTokenId()]);
         try {
-            $this->client->send($request);
+            $this->getClient()->head($this->pathname);
         } catch (GuzzleException $e) {
             if ($this->reportErrors && $e->getCode() != 404) {
                 trigger_error($e->getMessage(), E_ERROR);
@@ -119,7 +134,7 @@ class SwiftStreamWrapper implements StreamWrapperInterface
         if (!is_array($this->content)) {
             $request = new Request('GET', $this->pathname, ['X-Auth-Token' => $this->store->getTokenId()]);
             try {
-                $response = $this->client->send($request);
+                $response = $this->getClient()->send($request);
                 $this->content = array_values(unpack('C*', $response->getBody()->getContents()));
             } catch (GuzzleException $e) {
                 if ($e->getCode() == 404 && $create)
@@ -143,7 +158,7 @@ class SwiftStreamWrapper implements StreamWrapperInterface
         if (!is_int($this->contentSize)) {
             $request = new Request('HEAD', $this->pathname, ['X-Auth-Token' => $this->store->getTokenId()]);
             try {
-                $response = $this->client->send($request);
+                $response = $this->getClient()->send($request);
                 $this->contentSize = intval($response->getHeader('Content-Length'));
             } catch (GuzzleException $e) {
                 if ($this->reportErrors)
@@ -161,7 +176,7 @@ class SwiftStreamWrapper implements StreamWrapperInterface
         if (!is_int($this->contentCreatedTime)) {
             $request = new Request('HEAD', $this->pathname, ['X-Auth-Token' => $this->store->getTokenId()]);
             try {
-                $response = $this->client->send($request);
+                $response = $this->getClient()->send($request);
                 $this->contentCreatedTime = intval($response->getHeader('X-Timestamp'));
             } catch (GuzzleException $e) {
                 if ($this->reportErrors)
@@ -179,7 +194,7 @@ class SwiftStreamWrapper implements StreamWrapperInterface
         if (!is_int($this->contentModifiedTime)) {
             $request = new Request('HEAD', $this->pathname, ['X-Auth-Token' => $this->store->getTokenId()]);
             try {
-                $response = $this->client->send($request);
+                $response = $this->getClient()->send($request);
                 $this->contentModifiedTime = strtotime($response->getHeader('Last-Modified')[0]);
             } catch (GuzzleException $e) {
                 if ($this->reportErrors)
@@ -321,7 +336,7 @@ class SwiftStreamWrapper implements StreamWrapperInterface
                 'ETag' => hash('md5', $binaryString)
             ], $binaryString);
 
-            $resp = $this->client->send($request);
+            $resp = $this->getClient()->send($request);
 
             return true;
         } catch (GuzzleException $e) {
@@ -355,7 +370,7 @@ class SwiftStreamWrapper implements StreamWrapperInterface
             'Range' => sprintf('bytes=%d-%d', $this->pointer, $this->pointer + $count)
         ]);
         try {
-            $response = $this->client->send($request);
+            $response = $this->getClient()->send($request);
             $body = $response->getBody();
 
             $data = $response->getBody()->getContents();
@@ -468,7 +483,7 @@ class SwiftStreamWrapper implements StreamWrapperInterface
         $request = new Request('DELETE', $this->stripProtocol($path), ['X-Auth-Token' => $this->store->getTokenId()]);
         
         try {
-            $this->client->send($request);
+            $this->getClient()->send($request);
         } catch (GuzzleException $e) {
             if ($e->getCode() != 404) {
                 if ($this->reportErrors)

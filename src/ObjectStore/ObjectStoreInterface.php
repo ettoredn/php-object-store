@@ -3,13 +3,15 @@
 namespace EttoreDN\PHPObjectStorage\ObjectStore;
 
 
-interface ObjectStoreInterface
+use GuzzleHttp\Client;
+
+interface ObjectStoreInterface extends \Countable
 {
     /**
      * @param string $name
-     * @return mixed
+     * @return boolean
      */
-    function exists(string $name);
+    function exists(string $name): bool;
 
     /**
      * @param string $name
@@ -38,8 +40,14 @@ interface ObjectStoreInterface
     function delete(string $objectName);
 
     /**
-     * @param array $options
+     * @param string $prefix
+     * @param int $limit
      * @return array
      */
-    function listObjects(array $options = []);
+    function listObjectNames(string $prefix = '', int $limit = 0): array;
+
+    /**
+     * @return client Authenticated client
+     */
+    function getAuthenticatedClient(): Client;
 }
