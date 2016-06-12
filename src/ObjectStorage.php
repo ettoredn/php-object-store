@@ -7,7 +7,6 @@ use EttoreDN\PHPObjectStorage\Exception\ObjectStoreException;
 use EttoreDN\PHPObjectStorage\ObjectStore\ObjectStoreInterface;
 use EttoreDN\PHPObjectStorage\ObjectStore\SwiftObjectStore;
 use EttoreDN\PHPObjectStorage\StreamWrapper\StreamWrapperInterface;
-use EttoreDN\PHPObjectStorage\StreamWrapper\SwiftStreamWrapper;
 use EttoreDN\PHPObjectStorage\Exception\ObjectStorageException;
 
 

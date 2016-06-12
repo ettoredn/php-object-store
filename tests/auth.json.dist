@@ -4,8 +4,9 @@
     "password": "",
     "tenantId": "",
     "tenantName": "",
-    "region": "SBG1",
-    "authUrl": "https://auth.cloud.ovh.net/v2.0/",
-    "container": "media"
+    "region": "GRA1",
+    "authUrl": "https://auth.cloud.ovh.net/",
+    "authId": "v2.0",
+    "container": "uploads"
   }
 }
