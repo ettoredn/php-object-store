@@ -236,13 +236,13 @@ class SwiftObjectStore implements ObjectStoreInterface
         $response = \GuzzleHttp\json_decode($response->getBody());
 
         foreach ($response->versions->values as $version)
-            if ($version->id == $this->options['authId'])
+            if ($version->id == $this->options['authVersion'])
                 $endpoint = $version->links[0]->href;
 
         if (empty($endpoint))
             throw new ObjectStoreException('Cannot determine authentication endpoint');
 
-        if ($this->options['authId'] == 'v2.0') {
+        if ($this->options['authVersion'] == 'v2.0') {
             $uri = $endpoint .'tokens';
             $request = new Request('POST', $uri, ['Content-Type' => 'application/json'], \GuzzleHttp\json_encode([
                 'auth' => [
@@ -272,7 +272,7 @@ class SwiftObjectStore implements ObjectStoreInterface
                 throw new ObjectStoreException('Unable to find object store URL from the catalog: ' . $response);
 
         } else
-            throw new ObjectStoreException(sprintf('Identity API %s not supported', $this->options['authId']));
+            throw new ObjectStoreException(sprintf('Identity API %s not supported', $this->options['authVersion']));
 
         return $this->token;
     }

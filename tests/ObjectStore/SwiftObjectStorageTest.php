@@ -52,7 +52,7 @@ class SwiftObjectStorageTest extends \PHPUnit_Framework_TestCase
     }
     
     public function testExists() {
-        $this->assertTrue(self::$store->exists('swift-test.txt'));
+        $this->assertFalse(self::$store->exists('inexistent.txt'));
     }
     
     public function testDelete() {
