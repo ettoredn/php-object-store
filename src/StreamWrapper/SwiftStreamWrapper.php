@@ -3,14 +3,23 @@
 namespace EttoreDN\PHPObjectStorage\StreamWrapper;
 
 
-use EttoreDN\PHPObjectStorage\Exception\ObjectStoreException;
+use EttoreDN\PHPObjectStorage\Exception\StreamWrapperException;
 use EttoreDN\PHPObjectStorage\ObjectStorage;
 use EttoreDN\PHPObjectStorage\ObjectStore\ObjectStoreInterface;
 use EttoreDN\PHPObjectStorage\ObjectStore\SwiftObjectStore;
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Psr7\Request;
+use Monolog\Handler\ErrorLogHandler;
+use Monolog\Logger;
+use Psr\Log\LoggerInterface;
 
+/**
+ * Class SwiftStreamWrapper
+ * @package EttoreDN\PHPObjectStorage\StreamWrapper
+ * 
+ * TODO: implement a caching layer
+ */
 class SwiftStreamWrapper implements StreamWrapperInterface
 {
     public $context;
@@ -19,6 +28,11 @@ class SwiftStreamWrapper implements StreamWrapperInterface
      * @var array Used to retrieve object store options.
      */
     public static $options;
+
+    /**
+     * @var LoggerInterface
+     */
+    protected $logger;
 
     /**
      * @var string
@@ -91,126 +105,136 @@ class SwiftStreamWrapper implements StreamWrapperInterface
 
     public function __construct()
     {
+        $this->logger = new Logger('php-object-store/swift-wrapper', [new ErrorLogHandler()]);
+//        $this->logger->debug('Created new wrapper with options', self::$options);
+
         $this->store = ObjectStorage::getInstance(SwiftObjectStore::class, self::$options);
     }
 
-    /**
-     * @return Client
-     */
-    protected function getClient(): Client
+    public function __destruct()
     {
-        if (!$this->client) {
-            $this->client = $this->store->getAuthenticatedClient([
-                'base_uri' => $this->store->getEndpoint() .'/',
-                'connect_timeout' => 30
-            ]);
-        }
-
-        return $this->client;
+        // TODO: Implement __destruct() method.
     }
 
-    /**
-     * @return bool
-     * @throws GuzzleException
-     */
-    private function exists(): bool
+    public static function getProtocol(): string
     {
+        return 'swift';
+    }
+
+
+    //======== Potentially frequently called operations that require performance
+
+    /**
+     * @param int $count
+     * @return string
+     * @throws StreamWrapperException
+     */
+    public function stream_read(int $count): string
+    {
+        if (!$this->canRead)
+            throw new StreamWrapperException(sprintf('Cannot read file %s as it was opened as write only', $this->pathname));
+
+        $request = new Request('GET', $this->pathname, [
+            'X-Auth-Token' => $this->store->getTokenId(),
+            'Range' => sprintf('bytes=%d-%d', $this->pointer, $this->pointer + $count)
+        ]);
         try {
-            $this->getClient()->head($this->pathname);
+            $response = $this->getClient()->send($request);
+            $body = $response->getBody();
+
+            $data = $response->getBody()->getContents();
+            $this->pointer += $body->getSize();
+
+            return $data;
         } catch (GuzzleException $e) {
-            if ($this->reportErrors && $e->getCode() != 404) {
+            if ($this->reportErrors)
                 trigger_error($e->getMessage(), E_ERROR);
-                throw $e;
-            }
 
             return false;
         }
+    }
+
+    /**
+     * @param string $data
+     * @return int
+     * @throws GuzzleException
+     * @throws StreamWrapperException
+     */
+    public function stream_write(string $data): int
+    {
+        if (!$this->canWrite)
+            throw new StreamWrapperException(sprintf('Cannot write file %s as it was opened write only', $this->pathname));
+
+        $writePointer = $this->pointer;
+        if (in_array($this->mode, ['a+', 'a']))
+            $writePointer = $this->getContentSize();
+
+        $data = unpack('C*', $data);
+
+        foreach ($data as $char) {
+            $content = &$this->getContent();
+            $content[$writePointer++] = $char;
+        }
+
+        if (!in_array($this->mode, ['a+', 'a']))
+            $this->pointer = $writePointer;
+
+        return count($data);
+    }
+
+    public function stream_seek(int $offset, int $whence = SEEK_SET): bool
+    {
+        if ($this->mode == 'a')
+            return true;
+
+        if ($whence == SEEK_END)
+            throw new \RuntimeException('NOT IMPLEMENTED');
+
+        if (is_resource($this->content)) {
+            fseek($this->content, $offset, $whence);
+        }
+
+        if ($whence == SEEK_SET)
+            $this->pointer = $offset;
+        if ($whence == SEEK_CUR)
+            $this->pointer += $offset;
 
         return true;
     }
 
-    private function &getContent(bool $create = false)
+    public function stream_eof(): bool
     {
-        if (!is_array($this->content)) {
-            $request = new Request('GET', $this->pathname, ['X-Auth-Token' => $this->store->getTokenId()]);
-            try {
-                $response = $this->getClient()->send($request);
-                $this->content = array_values(unpack('C*', $response->getBody()->getContents()));
-            } catch (GuzzleException $e) {
-                if ($e->getCode() == 404 && $create)
-                    return $this->content = [];
+        return $this->pointer >= $this->getContentSize();
+    }
 
-                if ($this->reportErrors)
-                    trigger_error($e->getMessage(), E_ERROR);
+    public function stream_flush(): bool
+    {
+        if (!$this->canWrite)
+            throw new StreamWrapperException(sprintf('Cannot write file %s as it was opened as read only', $this->pathname));
 
-                throw $e;
-            }
+        try {
+            $args = $this->getContent();
+            array_unshift($args, 'C*');
+            $binaryString = call_user_func_array('pack', $args);
+
+            $request = new Request('PUT', $this->pathname, [
+                'X-Auth-Token' => $this->store->getTokenId(),
+                'ETag' => hash('md5', $binaryString)
+            ], $binaryString);
+
+            $resp = $this->getClient()->send($request);
+
+            return true;
+        } catch (GuzzleException $e) {
+            if ($this->reportErrors)
+                trigger_error($e->getMessage(), E_ERROR);
+
+            return false;
         }
-
-        return $this->content;
     }
 
-    private function getContentSize()
-    {
-        if (is_array($this->content))
-            return count($this->content);
 
-        if (!is_int($this->contentSize)) {
-            $request = new Request('HEAD', $this->pathname, ['X-Auth-Token' => $this->store->getTokenId()]);
-            try {
-                $response = $this->getClient()->send($request);
-                $this->contentSize = intval($response->getHeader('Content-Length'));
-            } catch (GuzzleException $e) {
-                if ($this->reportErrors)
-                    trigger_error($e->getMessage(), E_ERROR);
-
-                throw $e;
-            }
-        }
-
-        return $this->contentSize;
-    }
-
-    private function getContentCreatedTime()
-    {
-        if (!is_int($this->contentCreatedTime)) {
-            $request = new Request('HEAD', $this->pathname, ['X-Auth-Token' => $this->store->getTokenId()]);
-            try {
-                $response = $this->getClient()->send($request);
-                $this->contentCreatedTime = intval($response->getHeader('X-Timestamp'));
-            } catch (GuzzleException $e) {
-                if ($this->reportErrors)
-                    trigger_error($e->getMessage(), E_ERROR);
-
-                $this->contentCreatedTime = time();
-            }
-        }
-
-        return $this->contentCreatedTime;
-    }
-
-    private function getContentModifiedTime()
-    {
-        if (!is_int($this->contentModifiedTime)) {
-            $request = new Request('HEAD', $this->pathname, ['X-Auth-Token' => $this->store->getTokenId()]);
-            try {
-                $response = $this->getClient()->send($request);
-                $this->contentModifiedTime = strtotime($response->getHeader('Last-Modified')[0]);
-            } catch (GuzzleException $e) {
-                if ($this->reportErrors)
-                    trigger_error($e->getMessage(), E_ERROR);
-
-                return $this->contentModifiedTime = time();
-            }
-        }
-
-        return $this->contentModifiedTime;
-    }
-    
-    private function stripProtocol(string $path)
-    {
-        return substr($path, strlen(self::getProtocol()) + 3);
-    }
+    //========= Stream wrapper operations
 
     public function stream_open(string $path, string $mode, int $options, &$opened_path): bool
     {
@@ -220,12 +244,12 @@ class SwiftStreamWrapper implements StreamWrapperInterface
         $this->pathname = $this->stripProtocol($path);
 
         if ($mode === 'r') {
-            $this->getContentSize();
+            $this->getContentSize(); // Throws exception if the object does't exist
             $this->canRead = true;
             $this->pointer = 0;
         }
         if ($mode === 'r+') {
-            $this->getContentSize();
+            $this->getContentSize(); // Throws exception if the object does't exist
             $this->canRead = true;
             $this->canWrite = true;
             $this->pointer = 0;
@@ -306,116 +330,24 @@ class SwiftStreamWrapper implements StreamWrapperInterface
         return true;
     }
 
-    public function stream_cast(int $cast_as)
-    {
-        throw new \RuntimeException('NOT IMPLMENETED');
-    }
-
     public function stream_close()
     {
         return;
     }
 
-    public function stream_eof(): bool
-    {
-        return $this->pointer >= $this->getContentSize();
-    }
-
-    public function stream_flush(): bool
-    {
-        if (!$this->canWrite)
-            throw new ObjectStoreException(sprintf('Cannot write file %s as it was opened as read only', $this->pathname));
-
-        try {
-            $args = $this->getContent();
-            array_unshift($args, 'C*');
-            $binaryString = call_user_func_array('pack', $args);
-
-            $request = new Request('PUT', $this->pathname, [
-                'X-Auth-Token' => $this->store->getTokenId(),
-                'ETag' => hash('md5', $binaryString)
-            ], $binaryString);
-
-            $resp = $this->getClient()->send($request);
-
-            return true;
-        } catch (GuzzleException $e) {
-            if ($this->reportErrors)
-                trigger_error($e->getMessage(), E_ERROR);
-
-            return false;
-        }
-    }
-
-    public function stream_lock(int $operation): bool
-    {
-        // http://stackoverflow.com/questions/11837428/whats-the-difference-between-an-exclusive-lock-and-a-shared-lock
-
-        throw new \RuntimeException('NOT IMPLMENETED');
-    }
-
-    public function stream_metadata(string $path, int $option, mixed $value): bool
-    {
-        throw new \RuntimeException('NOT IMPLMENETED');
-    }
-
-
-    public function stream_read(int $count): string
-    {
-        if (!$this->canRead)
-            throw new ObjectStoreException(sprintf('Cannot read file %s as it was opened as write only', $this->pathname));
-
-        $request = new Request('GET', $this->pathname, [
-            'X-Auth-Token' => $this->store->getTokenId(),
-            'Range' => sprintf('bytes=%d-%d', $this->pointer, $this->pointer + $count)
-        ]);
-        try {
-            $response = $this->getClient()->send($request);
-            $body = $response->getBody();
-
-            $data = $response->getBody()->getContents();
-            $this->pointer += $body->getSize();
-
-            return $data;
-        } catch (GuzzleException $e) {
-            if ($this->reportErrors)
-                trigger_error($e->getMessage(), E_ERROR);
-
-            return false;
-        }
-    }
-
-    public function stream_seek(int $offset, int $whence = SEEK_SET): bool
-    {
-        if ($this->mode == 'a')
-            return true;
-
-        if ($whence == SEEK_END)
-            throw new \RuntimeException('NOT IMPLEMENTED');
-
-        if (is_resource($this->content)) {
-            fseek($this->content, $offset, $whence);
-        }
-
-        if ($whence == SEEK_SET)
-            $this->pointer = $offset;
-        if ($whence == SEEK_CUR)
-            $this->pointer += $offset;
-
-        return true;
-    }
-
-    public function stream_set_option(int $option, int $arg1, int $arg2): bool
-    {
-        throw new \RuntimeException('NOT IMPLMENETED');
-    }
-
+    /**
+     * This method is called in response to fstat() **ONLY**.
+     *
+     * @return array|false
+     * @throws GuzzleException
+     */
     public function stream_stat(): array
     {
         $stat = [];
         $stat[0] = $stat['dev'] = 0;
         $stat[1] = $stat['ino'] = 0;
-        $stat[2] = $stat['mode'] = 0;
+        // o+w is needed otherwise is_writable() returns false.
+        $stat[2] = $stat['mode'] = 010 << 12 | 0666; // Regular file rw-rw-rw-
         $stat[3] = $stat['nlink'] = 0;
         $stat[4] = $stat['uid'] = 0;
         $stat[5] = $stat['gid'] = 0;
@@ -426,6 +358,90 @@ class SwiftStreamWrapper implements StreamWrapperInterface
         $stat[10] = $stat['ctime'] = $this->getContentCreatedTime();
         $stat[11] = $stat['blksize'] = 0;
         $stat[12] = $stat['blocks'] = 0;
+
+        return $stat;
+    }
+
+    /**
+     * This method is called in response to all stat() related functions.
+     * See http://man7.org/linux/man-pages/man2/stat.2.html .
+     *
+     * @param string $path
+     * @param int $flags
+     * @return array|false
+     * @throws GuzzleException
+     * @throws StreamWrapperException
+     */
+    public function url_stat(string $path, int $flags)
+    {
+//        $stat = [];
+//        $stat[0] = $stat['dev'] = 0;
+//        $stat[1] = $stat['ino'] = 0;
+//        $stat[2] = $stat['mode'] = 010 << 12 | 0666; // Regular file rw-rw-r--
+//        $stat[3] = $stat['nlink'] = 0;
+//        $stat[4] = $stat['uid'] = 0;
+//        $stat[5] = $stat['gid'] = 0;
+//        $stat[6] = $stat['rdev'] = 0;
+//        $stat[7] = $stat['size'] = 0;
+//        $stat[8] = $stat['atime'] = 0;
+//        $stat[9] = $stat['mtime'] = 0;
+//        $stat[10] = $stat['ctime'] = 0;
+//        $stat[11] = $stat['blksize'] = 0;
+//        $stat[12] = $stat['blocks'] = 0;
+//
+//        if (substr($path, 0, 11) == 'swift://is_')
+//            return $stat;
+        
+        if (STREAM_URL_STAT_LINK & $flags)
+            /*
+             * For resources with the ability to link to other resource
+             * (such as an HTTP Location: forward, or a filesystem symlink).
+             * This flag specified that only information about the link itself
+             * should be returned, not the resource pointed to by the link.
+             * This flag is set in response to calls to lstat(), is_link(), or filetype().
+             */
+            return false;
+
+        if (!$this->existsPath($path)) {
+            if (!(STREAM_URL_STAT_QUIET & $flags))
+                trigger_error(sprintf('Object %s does not exist', $path, E_WARNING));
+
+            return false;
+        }
+
+        $stat = [];
+        $stat[0] = $stat['dev'] = 0;
+        $stat[1] = $stat['ino'] = 0;
+        // o+w is needed otherwise is_writable() returns false.
+        $stat[2] = $stat['mode'] = 010 << 12 | 0666; // Regular file rw-rw-rw-
+        $stat[3] = $stat['nlink'] = 0;
+        $stat[4] = $stat['uid'] = 0;
+        $stat[5] = $stat['gid'] = 0;
+        $stat[6] = $stat['rdev'] = 0;
+        $stat[7] = $stat['size'] = 0;
+        $stat[8] = $stat['atime'] = 0;
+        $stat[9] = $stat['mtime'] = 0;
+        $stat[10] = $stat['ctime'] = 0;
+        $stat[11] = $stat['blksize'] = 0;
+        $stat[12] = $stat['blocks'] = 0;
+
+        $request = new Request('HEAD', $this->stripProtocol($path), ['X-Auth-Token' => $this->store->getTokenId()]);
+        try {
+            $response = $this->getClient()->send($request);
+            $stat['mtime'] = $stat[9] = strtotime($response->getHeader('Last-Modified')[0]);
+            $stat['ctime'] = $stat[10] = intval($response->getHeader('X-Timestamp'));
+            $stat['size'] = $stat[7] = intval($response->getHeader('Content-Length'));
+        } catch (GuzzleException $e) {
+            if (!($flags & STREAM_URL_STAT_QUIET))
+                /*
+                 * If this flag is set, your wrapper should not raise any errors. If this flag is not set,
+                 * you are responsible for reporting errors using the trigger_error() function during stating
+                 * of the path.
+                 */
+                trigger_error($e->getMessage(), E_ERROR);
+
+            return false;
+        }
 
         return $stat;
     }
@@ -456,28 +472,6 @@ class SwiftStreamWrapper implements StreamWrapperInterface
         return true;
     }
 
-    public function stream_write(string $data): int
-    {
-        if (!$this->canWrite)
-            throw new ObjectStoreException(sprintf('Cannot write file %s as it was opened write only', $this->pathname));
-
-        $writePointer = $this->pointer;
-        if (in_array($this->mode, ['a+', 'a']))
-            $writePointer = $this->getContentSize();
-
-        $data = unpack('C*', $data);
-
-        foreach ($data as $char) {
-            $content = &$this->getContent();
-            $content[$writePointer++] = $char;
-        }
-
-        if (!in_array($this->mode, ['a+', 'a']))
-            $this->pointer = $writePointer;
-
-        return count($data);
-    }
-
     public function unlink(string $path): bool
     {
         $request = new Request('DELETE', $this->stripProtocol($path), ['X-Auth-Token' => $this->store->getTokenId()]);
@@ -496,18 +490,161 @@ class SwiftStreamWrapper implements StreamWrapperInterface
         return true;
     }
 
-    public function url_stat(string $path, int $flags): array
-    {
-        throw new ObjectStoreException('NOT SUPPORTED');
-    }
-
-    public static function getProtocol(): string
-    {
-        return 'swift';
-    }
-
     public function rename(string $path_from, string $path_to): bool
     {
-        throw new ObjectStoreException('NOT SUPPORTED');
+        throw new StreamWrapperException('NOT IMPLEMENTED');
     }
+
+    public function stream_lock(int $operation): bool
+    {
+        // http://stackoverflow.com/questions/11837428/whats-the-difference-between-an-exclusive-lock-and-a-shared-lock
+        return false;
+    }
+    public function stream_cast(int $cast_as)
+    {
+        return false;
+    }
+    public function stream_metadata(string $path, int $option, mixed $value): bool
+    {
+        return true;
+    }
+    public function stream_set_option(int $option, int $arg1, int $arg2): bool
+    {
+        return false;
+    }
+
+    //============== Helpers
+
+    /**
+     * @return Client
+     */
+    protected function getClient(): Client
+    {
+        if (!$this->client) {
+            $this->client = $this->store->getAuthenticatedClient([
+                'base_uri' => rtrim($this->store->getEndpoint(), '/') .'/',
+                'connect_timeout' => 30
+            ]);
+        }
+
+        return $this->client;
+    }
+
+    private function exists(): bool
+    {
+        try {
+            $this->getClient()->head($this->pathname);
+        } catch (GuzzleException $e) {
+            if ($this->reportErrors && $e->getCode() != 404) {
+                trigger_error($e->getMessage(), E_ERROR);
+                throw $e;
+            }
+
+            return false;
+        }
+
+        return true;
+    }
+
+    private function existsPath(string $path): bool
+    {
+        try {
+            $this->getClient()->head($this->stripProtocol($path));
+        } catch (GuzzleException $e) {
+            if ($this->reportErrors && $e->getCode() != 404) {
+                trigger_error($e->getMessage(), E_ERROR);
+                throw $e;
+            }
+            return false;
+        }
+        return true;
+    }
+
+    private function &getContent(bool $create = false)
+    {
+        if (!is_array($this->content)) {
+            $request = new Request('GET', $this->pathname, ['X-Auth-Token' => $this->store->getTokenId()]);
+            try {
+                $response = $this->getClient()->send($request);
+                $this->content = array_values(unpack('C*', $response->getBody()->getContents()));
+            } catch (GuzzleException $e) {
+                if ($e->getCode() == 404 && $create)
+                    return $this->content = [];
+
+                if ($this->reportErrors)
+                    trigger_error($e->getMessage(), E_ERROR);
+
+                throw $e;
+            }
+        }
+
+        return $this->content;
+    }
+
+    private function getContentSize()
+    {
+        if (is_array($this->content))
+            return count($this->content);
+
+        if (!is_int($this->contentSize)) {
+            $request = new Request('HEAD', $this->pathname, ['X-Auth-Token' => $this->store->getTokenId()]);
+            try {
+                $response = $this->getClient()->send($request);
+                $this->contentSize = intval($response->getHeader('Content-Length'));
+            } catch (GuzzleException $e) {
+                if ($this->reportErrors)
+                    trigger_error($e->getMessage(), E_ERROR);
+
+                throw $e;
+            }
+        }
+
+        return $this->contentSize;
+    }
+
+    private function getContentCreatedTime()
+    {
+        if (!is_int($this->contentCreatedTime)) {
+            $request = new Request('HEAD', $this->pathname, ['X-Auth-Token' => $this->store->getTokenId()]);
+            try {
+                $response = $this->getClient()->send($request);
+                $this->contentCreatedTime = intval($response->getHeader('X-Timestamp'));
+            } catch (GuzzleException $e) {
+                if ($this->reportErrors)
+                    trigger_error($e->getMessage(), E_ERROR);
+
+                $this->contentCreatedTime = time();
+            }
+        }
+
+        return $this->contentCreatedTime;
+    }
+
+    private function getContentModifiedTime()
+    {
+        if (!is_int($this->contentModifiedTime)) {
+            $request = new Request('HEAD', $this->pathname, ['X-Auth-Token' => $this->store->getTokenId()]);
+            try {
+                $response = $this->getClient()->send($request);
+                $this->contentModifiedTime = strtotime($response->getHeader('Last-Modified')[0]);
+            } catch (GuzzleException $e) {
+                if ($this->reportErrors)
+                    trigger_error($e->getMessage(), E_ERROR);
+
+                return $this->contentModifiedTime = time();
+            }
+        }
+
+        return $this->contentModifiedTime;
+    }
+
+    private function stripProtocol(string $path)
+    {
+        return substr($path, strlen(self::getProtocol()) + 3);
+    }
+
+    public function __call($name, $args){
+        throw new StreamWrapperException(sprintf('Method %s does not exist', $name));
+    }
+
 }

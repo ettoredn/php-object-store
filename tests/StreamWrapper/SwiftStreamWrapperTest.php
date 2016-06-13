@@ -2,6 +2,7 @@
 
 namespace PHPObjectStorage\Test\ObjectStore;
 
+use EttoreDN\PHPObjectStorage\Exception\StreamWrapperException;
 use EttoreDN\PHPObjectStorage\ObjectStorage;
 use EttoreDN\PHPObjectStorage\Exception\ObjectStoreException;
 use EttoreDN\PHPObjectStorage\StreamWrapper\SwiftStreamWrapper;
@@ -48,6 +49,21 @@ class SwiftStreamWrapperTest extends \PHPUnit_Framework_TestCase
         
         fclose($h);
     }
+
+    public function testUrlStat() {
+        $this->createFixture();
+        $this->assertTrue(file_exists(self::fixtureUrl));
+        $this->assertTrue(is_file(self::fixtureUrl));
+        $this->assertTrue(is_writable(self::fixtureUrl));
+        $this->assertTrue(is_readable(self::fixtureUrl));
+        $this->assertFalse(is_executable(self::fixtureUrl));
+        $this->assertEquals(0100666, fileperms(self::fixtureUrl));
+        $this->assertFalse(is_dir(self::fixtureUrl));
+        $this->assertFalse(is_link(self::fixtureUrl));
+        $this->assertGreaterThan(0, filemtime(self::fixtureUrl));
+        $this->assertGreaterThan(0, filectime(self::fixtureUrl));
+        $this->assertGreaterThan(0, filesize(self::fixtureUrl));
+    }
     
     public function testUnlink() {
         $this->createFixture();
@@ -88,4 +104,16 @@ class SwiftStreamWrapperTest extends \PHPUnit_Framework_TestCase
 
         fclose($h);
     }
+
+    /**
+     * @expectedException \EttoreDN\PHPObjectStorage\Exception\StreamWrapperException
+     */
+    public function testReadOnly() {
+        $this->createFixture();
+        $h = fopen(self::fixtureUrl, 'r');
+        fwrite($h, 'test');
+        fclose($h);
+    }
+
+
 }

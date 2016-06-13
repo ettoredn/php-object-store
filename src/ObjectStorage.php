@@ -13,8 +13,6 @@ use EttoreDN\PHPObjectStorage\Exception\ObjectStorageException;
 class ObjectStorage
 {
     const SWIFT = SwiftObjectStore::class;
-    const GOOGLE = 'google_storage';
-    const S3 = 'amazon_s3';
     
     protected static $instancesCount = [];
 
