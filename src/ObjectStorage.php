@@ -20,13 +20,12 @@ class ObjectStorage
     /**
      * @param $class
      * @param array $options
-     * @return mixed
+     * @return ObjectStoreInterface
      * @throws ObjectStorageException
-     * @throws ObjectStoreException
-     * 
+     *
      * TODO no singletons, count instances
      */
-    public static function getInstance($class, array $options = [])
+    public static function getInstance($class, array $options = []): ObjectStoreInterface
     {
         if (!($class instanceof \ReflectionClass))
             $class = new \ReflectionClass($class);

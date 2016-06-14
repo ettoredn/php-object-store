@@ -233,7 +233,6 @@ class SwiftObjectStore implements ObjectStoreInterface
     }
 
 
-
     /**
      * Refreshes the token and sets the endpoint URL.
      * @return SwiftToken
@@ -280,7 +279,7 @@ class SwiftObjectStore implements ObjectStoreInterface
                             $this->endpoint = $endpoint->publicURL;
             }
             if (!$this->endpoint)
-                throw new ObjectStoreException('Unable to find object store URL from the catalog: ' . $response);
+                throw new ObjectStoreException('Unable to find object store URL from the catalog: '. json_encode($response));
 
         } else
             throw new ObjectStoreException(sprintf('Identity API %s not supported', $this->options['authVersion']));
@@ -294,7 +293,7 @@ class SwiftObjectStore implements ObjectStoreInterface
     public function count()
     {
         $r = $this->getClient()->head('');
-        return intval($r->getHeader('X-Container-Object-Count'));
+        return intval($r->getHeader('X-Container-Object-Count')[0]);
     }
 
 

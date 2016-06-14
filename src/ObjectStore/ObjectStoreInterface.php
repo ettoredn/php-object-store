@@ -3,6 +3,7 @@
 namespace EttoreDN\PHPObjectStorage\ObjectStore;
 
 
+use EttoreDN\PHPObjectStorage\Exception\ObjectStoreException;
 use GuzzleHttp\Client;
 
 interface ObjectStoreInterface extends \Countable
@@ -10,6 +11,7 @@ interface ObjectStoreInterface extends \Countable
     /**
      * @param string $name
      * @return boolean
+     * @throws ObjectStoreException
      */
     function exists(string $name): bool;
 
@@ -18,6 +20,7 @@ interface ObjectStoreInterface extends \Countable
      * @param mixed $content
      * @param bool $overwrite
      * @return mixed
+     * @throws ObjectStoreException
      */
     function upload(string $name, $content, bool $overwrite = true);
 
@@ -26,18 +29,21 @@ interface ObjectStoreInterface extends \Countable
      * @param string $format
      * @param string $uploadPath
      * @return
+     * @throws ObjectStoreException
      */
     function uploadArchive(\SplFileInfo $archive, string $format, string $uploadPath = '');
 
     /**
      * @param string $name
      * @return string
+     * @throws ObjectStoreException
      */
     function download(string $name): string;
 
     /**
      * @param string $name
      * @return mixed
+     * @throws ObjectStoreException
      */
     function delete(string $name): bool;
 
@@ -45,11 +51,14 @@ interface ObjectStoreInterface extends \Countable
      * @param string $prefix
      * @param int $limit
      * @return array
+     * @throws ObjectStoreException
      */
     function listObjectNames(string $prefix = '', int $limit = 0): array;
 
     /**
-     * @return client Authenticated client
+     * @param array $defaults
+     * @return Client Authenticated client
+     * @throws ObjectStoreException
      */
-    function getAuthenticatedClient(): Client;
+    function getAuthenticatedClient(array $defaults = []): Client;
 }
