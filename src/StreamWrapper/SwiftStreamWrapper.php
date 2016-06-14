@@ -241,6 +241,12 @@ class SwiftStreamWrapper implements StreamWrapperInterface
         if (STREAM_REPORT_ERRORS & $options)
             $this->reportErrors = true;
 
+        $stat = $this->url_stat($path, STREAM_URL_STAT_QUIET);
+        if (is_array($stat) && ($stat['mode'] & 0040000)) {
+            trigger_error(sprintf('Cannot fopen directory %s', $path));
+            return false;
+        }
+
         $this->pathname = $this->stripProtocol($path);
 
         if ($mode === 'r') {
@@ -402,13 +408,6 @@ class SwiftStreamWrapper implements StreamWrapperInterface
              */
             return false;
 
-        if (!$this->existsPath($path)) {
-            if (!(STREAM_URL_STAT_QUIET & $flags))
-                trigger_error(sprintf('Object %s does not exist', $path, E_WARNING));
-
-            return false;
-        }
-
         $stat = [];
         $stat[0] = $stat['dev'] = 0;
         $stat[1] = $stat['ino'] = 0;
@@ -428,9 +427,24 @@ class SwiftStreamWrapper implements StreamWrapperInterface
         $request = new Request('HEAD', $this->stripProtocol($path), ['X-Auth-Token' => $this->store->getTokenId()]);
         try {
             $response = $this->getClient()->send($request);
-            $stat['mtime'] = $stat[9] = strtotime($response->getHeader('Last-Modified')[0]);
-            $stat['ctime'] = $stat[10] = intval($response->getHeader('X-Timestamp'));
-            $stat['size'] = $stat[7] = intval($response->getHeader('Content-Length'));
+
+            $stat['ctime'] = $stat[10] = intval($response->getHeader('X-Timestamp')[0]);
+            $stat['size'] = $stat[7] = intval($response->getHeader('Content-Length')[0]);
+
+            if ($response->hasHeader('X-Container-Object-Count')) {
+                // $path = swift://<container>
+                $stat[2] = $stat['mode'] |= 0111; // ugo+x
+                $stat[2] = $stat['mode'] = ($stat['mode'] & ~( 0170000 )) | 0040000; // Directory
+            } else if ($response->hasHeader('X-Object-Meta-Directory')) {
+                // Directory created with mkdir()
+                $stat['mtime'] = $stat[9] = strtotime($response->getHeader('Last-Modified')[0]);
+
+                $stat[2] = $stat['mode'] |= 0111; // ugo+x
+                $stat[2] = $stat['mode'] = ($stat['mode'] & ~( 0170000 )) | 0040000; // Directory
+            } else {
+                // Object aka file
+                $stat['mtime'] = $stat[9] = strtotime($response->getHeader('Last-Modified')[0]);
+            }
         } catch (GuzzleException $e) {
             if (!($flags & STREAM_URL_STAT_QUIET))
                 /*
@@ -474,6 +488,7 @@ class SwiftStreamWrapper implements StreamWrapperInterface
 
     public function unlink(string $path): bool
     {
+        // TODO return error if $path is a directory or the container
         $request = new Request('DELETE', $this->stripProtocol($path), ['X-Auth-Token' => $this->store->getTokenId()]);
         
         try {
@@ -514,11 +529,56 @@ class SwiftStreamWrapper implements StreamWrapperInterface
     }
     public function mkdir(string $path, int $mode, int $options): bool
     {
-        return false;
+        if (preg_match('/^swift:\/\/[^\/]+[\/]*$/', $path)) {
+            // if container (swift://<container>/?) create container? TODO
+            
+            return false;
+        }
+        try {
+            $request = new Request('PUT', $this->stripProtocol($path), [
+                'X-Auth-Token' => $this->store->getTokenId(),
+                'X-Object-Meta-Directory' => '1'
+            ], 'pseudo directory');
+
+            $resp = $this->getClient()->send($request);
+        } catch (GuzzleException $e) {
+            return false;
+        }
+
+        return true;
     }
     public function rmdir(string $path, int $options): bool
     {
-        return false;
+        if (preg_match('/^swift:\/\/[^\/]+[\/]*$/', $path)) {
+            // if container (swift://<container>/?) delete container? TODO
+
+            return false;
+        }
+
+        $stat = $this->url_stat($path, STREAM_URL_STAT_QUIET);
+        if (!is_array($stat))
+            // Not existent
+            return true;
+        
+        if (!$stat['mode'] & 0040000) {
+            trigger_error(sprintf('%s is not a directory', $path));
+            return false;
+        }
+        
+        $request = new Request('DELETE', $this->stripProtocol($path), ['X-Auth-Token' => $this->store->getTokenId()]);
+
+        try {
+            $this->getClient()->send($request);
+        } catch (GuzzleException $e) {
+            if ($e->getCode() != 404) {
+                if ($this->reportErrors)
+                    trigger_error($e->getMessage(), E_ERROR);
+
+                return false;
+            }
+        }
+
+        return true;
     }
 
 
@@ -599,7 +659,7 @@ class SwiftStreamWrapper implements StreamWrapperInterface
             $request = new Request('HEAD', $this->pathname, ['X-Auth-Token' => $this->store->getTokenId()]);
             try {
                 $response = $this->getClient()->send($request);
-                $this->contentSize = intval($response->getHeader('Content-Length'));
+                $this->contentSize = intval($response->getHeader('Content-Length')[0]);
             } catch (GuzzleException $e) {
                 if ($this->reportErrors)
                     trigger_error($e->getMessage(), E_ERROR);
@@ -617,7 +677,7 @@ class SwiftStreamWrapper implements StreamWrapperInterface
             $request = new Request('HEAD', $this->pathname, ['X-Auth-Token' => $this->store->getTokenId()]);
             try {
                 $response = $this->getClient()->send($request);
-                $this->contentCreatedTime = intval($response->getHeader('X-Timestamp'));
+                $this->contentCreatedTime = intval($response->getHeader('X-Timestamp')[0]);
             } catch (GuzzleException $e) {
                 if ($this->reportErrors)
                     trigger_error($e->getMessage(), E_ERROR);

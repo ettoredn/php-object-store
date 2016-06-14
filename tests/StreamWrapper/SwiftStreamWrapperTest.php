@@ -10,6 +10,7 @@ use EttoreDN\PHPObjectStorage\StreamWrapper\SwiftStreamWrapper;
 class SwiftStreamWrapperTest extends \PHPUnit_Framework_TestCase
 {
     const fixtureUrl = 'swift://test/swift-test.txt';
+    const fixtureContainer = 'swift://test';
     const fixtureContent = '012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789';
     private static $fixtureSize;
 
@@ -38,6 +39,22 @@ class SwiftStreamWrapperTest extends \PHPUnit_Framework_TestCase
         $this->assertContains('swift', stream_get_wrappers(), 'swift:// protocol not registered');
     }
 
+    public function testContainerPath() {
+        $this->assertTrue(is_dir(self::fixtureContainer));
+        $this->assertFalse(is_file(self::fixtureContainer));
+        $this->assertFalse(is_link(self::fixtureContainer));
+        $this->assertTrue(is_readable(self::fixtureContainer));
+        $this->assertTrue(is_writable(self::fixtureContainer));
+        $this->assertFalse(mkdir(self::fixtureContainer));
+        $this->assertFalse(rmdir(self::fixtureContainer));
+    }
+
+    public function testDirectory() {
+        $this->assertTrue(mkdir(self::fixtureContainer .'/pseudo-dir'));
+        $this->assertTrue(is_dir(self::fixtureContainer .'/pseudo-dir'));
+        $this->assertTrue(rmdir(self::fixtureContainer .'/pseudo-dir'));
+    }
+
     public function testSwiftWrapperWrite() {
         $h = fopen('swift://test/swift-test-write.txt', 'w');
 
@@ -64,7 +81,7 @@ class SwiftStreamWrapperTest extends \PHPUnit_Framework_TestCase
         $this->assertGreaterThan(0, filectime(self::fixtureUrl));
         $this->assertGreaterThan(0, filesize(self::fixtureUrl));
     }
-    
+
     public function testUnlink() {
         $this->createFixture();
         $this->assertTrue(unlink(self::fixtureUrl), 'unlink error');
@@ -114,10 +131,5 @@ class SwiftStreamWrapperTest extends \PHPUnit_Framework_TestCase
         fwrite($h, 'test');
         fclose($h);
     }
-    
-    public function testDirectory() {
-        $this->assertFalse(is_dir('swift://whatever/ends/with/'));
-        $this->assertFalse(mkdir('swift://dir'));
-        $this->assertFalse(rmdir('swift://dir'));
-    }
+
 }

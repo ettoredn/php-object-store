@@ -62,6 +62,7 @@ class ObjectStorage
         $protocol = $class->getMethod('getProtocol')->invoke(null);
 
         if (!stream_wrapper_register($protocol, $class->getName(), STREAM_IS_URL))
+//        if (!stream_wrapper_register($protocol, $class->getName()))
             throw new ObjectStorageException('Unable to register stream wrapper protocol' . $protocol);
     }
 
