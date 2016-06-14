@@ -136,7 +136,7 @@ class SwiftStreamWrapper implements StreamWrapperInterface
 
         $request = new Request('GET', $this->pathname, [
             'X-Auth-Token' => $this->store->getTokenId(),
-            'Range' => sprintf('bytes=%d-%d', $this->pointer, $this->pointer + $count)
+            'Range' => sprintf('bytes=%d-%d', $this->pointer, $this->pointer + $count-1)
         ]);
         try {
             $response = $this->getClient()->send($request);
