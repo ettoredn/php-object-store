@@ -105,15 +105,17 @@ class SwiftStreamWrapper implements StreamWrapperInterface
 
     public function __construct()
     {
-        $this->logger = new Logger('php-object-store/swift-wrapper', [new ErrorLogHandler()]);
-//        $this->logger->debug('Created new wrapper with options', self::$options);
-
+        if (array_key_exists('logger', self::$options) && (self::$options['logger'] instanceof LoggerInterface))
+            $this->logger = self::$options['logger'];
+        else
+            $this->logger = new Logger('swift.stream-wrapper', [new ErrorLogHandler()]);
+        
         $this->store = ObjectStorage::getInstance(SwiftObjectStore::class, self::$options);
     }
 
     public function __destruct()
     {
-        // TODO: Implement __destruct() method.
+        
     }
 
     public static function getProtocol(): string
@@ -131,8 +133,10 @@ class SwiftStreamWrapper implements StreamWrapperInterface
      */
     public function stream_read(int $count): string
     {
-        if (!$this->canRead)
-            throw new StreamWrapperException(sprintf('Cannot read file %s as it was opened as write only', $this->pathname));
+        if (!$this->canRead) {
+            $this->logError(sprintf('Cannot read object %s as it was opened in read only mode', $this->pathname));
+            return false;
+        }
 
         $request = new Request('GET', $this->pathname, [
             'X-Auth-Token' => $this->store->getTokenId(),
@@ -147,9 +151,7 @@ class SwiftStreamWrapper implements StreamWrapperInterface
 
             return $data;
         } catch (GuzzleException $e) {
-            if ($this->reportErrors)
-                trigger_error($e->getMessage(), E_ERROR);
-
+            $this->logError($e->getMessage());
             return false;
         }
     }
@@ -162,8 +164,10 @@ class SwiftStreamWrapper implements StreamWrapperInterface
      */
     public function stream_write(string $data): int
     {
-        if (!$this->canWrite)
-            throw new StreamWrapperException(sprintf('Cannot write file %s as it was opened write only', $this->pathname));
+        if (!$this->canWrite) {
+            $this->logError(sprintf('Cannot write file %s as it was opened read only', $this->pathname));
+            return 0;
+        }
 
         $writePointer = $this->pointer;
         if (in_array($this->mode, ['a+', 'a']))
@@ -188,7 +192,7 @@ class SwiftStreamWrapper implements StreamWrapperInterface
             return true;
 
         if ($whence == SEEK_END)
-            throw new \RuntimeException('NOT IMPLEMENTED');
+            throw new StreamWrapperException('NOT IMPLEMENTED');
 
         if (is_resource($this->content)) {
             fseek($this->content, $offset, $whence);
@@ -209,8 +213,10 @@ class SwiftStreamWrapper implements StreamWrapperInterface
 
     public function stream_flush(): bool
     {
-        if (!$this->canWrite)
-            throw new StreamWrapperException(sprintf('Cannot write file %s as it was opened as read only', $this->pathname));
+        if (!$this->canWrite) {
+            $this->logError(sprintf('Cannot write file %s as it was opened read only', $this->pathname));
+            return 0;
+        }
 
         try {
             $args = $this->getContent();
@@ -222,13 +228,11 @@ class SwiftStreamWrapper implements StreamWrapperInterface
                 'ETag' => hash('md5', $binaryString)
             ], $binaryString);
 
-            $resp = $this->getClient()->send($request);
+            $this->getClient()->send($request);
 
             return true;
         } catch (GuzzleException $e) {
-            if ($this->reportErrors)
-                trigger_error($e->getMessage(), E_ERROR);
-
+            $this->logError($e->getMessage());
             return false;
         }
     }
@@ -241,41 +245,41 @@ class SwiftStreamWrapper implements StreamWrapperInterface
         if (STREAM_REPORT_ERRORS & $options)
             $this->reportErrors = true;
 
-        $mode = str_replace(['b', 't'], '', $mode); // b = bullshit mode
+        $filteredMode = str_replace(['b', 't'], '', $mode); // b = bullshit mode
 
         $stat = $this->url_stat($path, STREAM_URL_STAT_QUIET);
         if (is_array($stat) && ($stat['mode'] & 0040000)) {
-            trigger_error(sprintf('Cannot fopen directory %s', $path));
+            $this->logError(sprintf('Cannot fopen directory %s', $path));
             return false;
         }
 
         $this->pathname = $this->stripProtocol($path);
 
-        if ($mode === 'r') {
+        if ($filteredMode === 'r') {
             $this->getContentSize(); // Throws exception if the object does't exist
             $this->canRead = true;
             $this->pointer = 0;
         }
-        else if ($mode === 'r+') {
+        else if ($filteredMode === 'r+') {
             $this->getContentSize(); // Throws exception if the object does't exist
             $this->canRead = true;
             $this->canWrite = true;
             $this->pointer = 0;
         }
-        else if ($mode === 'w') {
+        else if ($filteredMode === 'w') {
             $this->unlink($path);
             $this->canWrite = true;
             $this->content = [];
             $this->pointer = 0;
         }
-        else if ($mode === 'w+') {
+        else if ($filteredMode === 'w+') {
             $this->unlink($path);
             $this->canRead = true;
             $this->canWrite = true;
             $this->content = [];
             $this->pointer = 0;
         }
-        else if ($mode === 'a') {
+        else if ($filteredMode === 'a') {
             $this->getContent(true);
             $this->canRead = true;
             $this->pointer = $this->getContentSize();
@@ -284,7 +288,7 @@ class SwiftStreamWrapper implements StreamWrapperInterface
             // ===> If the file does not exist, attempt to create it.
             // ===> In this mode, fseek() has no effect, writes are always appended.
         }
-        else if ($mode === 'a+') {
+        else if ($filteredMode === 'a+') {
             $this->getContent(true);
             $this->canRead = true;
             $this->canWrite = true;
@@ -297,7 +301,7 @@ class SwiftStreamWrapper implements StreamWrapperInterface
             // ===> In this mode, fseek() only affects the reading position, writes are always appended.
 
         }
-        else if ($mode === 'x') {
+        else if ($filteredMode === 'x') {
             if ($this->exists()) {
                 trigger_error(sprintf('Object %s does not exist', $path), E_WARNING);
                 return false;
@@ -306,7 +310,7 @@ class SwiftStreamWrapper implements StreamWrapperInterface
             $this->content = [];
             $this->pointer = 0;
         }
-        else if ($mode === 'x+') {
+        else if ($filteredMode === 'x+') {
             if ($this->exists()) {
                 trigger_error(sprintf('Object %s does not exist', $path), E_WARNING);
                 return false;
@@ -316,22 +320,24 @@ class SwiftStreamWrapper implements StreamWrapperInterface
             $this->content = [];
             $this->pointer = 0;
         }
-        else if ($mode === 'c') {
+        else if ($filteredMode === 'c') {
             $this->getContent(true);
             $this->canWrite = true;
             $this->pointer = 0;
         }
-        else if ($mode === 'c+') {
+        else if ($filteredMode === 'c+') {
             $this->getContent(true);
             $this->canRead = true;
             $this->canWrite = true;
             $this->pointer = 0;
         }
 
-        $this->mode = $mode;
+        $this->mode = $filteredMode;
 
         if (STREAM_USE_PATH & $options)
             $opened_path = $path;
+
+        $this->logger->debug(sprintf('fopen(%s, %s)', $this->pathname, $filteredMode));
 
         return true;
     }
@@ -365,6 +371,8 @@ class SwiftStreamWrapper implements StreamWrapperInterface
         $stat[11] = $stat['blksize'] = 0;
         $stat[12] = $stat['blocks'] = 0;
 
+        $this->logger->debug(sprintf('stat(%s)', $this->pathname), $stat);
+
         return $stat;
     }
 
@@ -397,7 +405,7 @@ class SwiftStreamWrapper implements StreamWrapperInterface
 //
 //        if (substr($path, 0, 11) == 'swift://is_')
 //            return $stat;
-        
+
         if (STREAM_URL_STAT_LINK & $flags)
             /*
              * For resources with the ability to link to other resource
@@ -452,10 +460,12 @@ class SwiftStreamWrapper implements StreamWrapperInterface
                  * you are responsible for reporting errors using the trigger_error() function during stating
                  * of the path.
                  */
-                trigger_error($e->getMessage(), E_ERROR);
+                $this->logError(sprintf('Unable to fetch metadata for object %s: %s', $this->stripProtocol($path), $e->getMessage()));
 
             return false;
         }
+
+        $this->logger->debug(sprintf('url_stat(%s, %d)', $this->stripProtocol($path), $flags), $stat);
 
         return $stat;
     }
@@ -488,7 +498,21 @@ class SwiftStreamWrapper implements StreamWrapperInterface
 
     public function unlink(string $path): bool
     {
-        // TODO return error if $path is a directory or the container
+        // Container (swift://<container>/?)
+        if (preg_match('/^swift:\/\/[^\/]+[\/]*$/', $path))
+            return false;
+
+        $stat = $this->url_stat($path, STREAM_URL_STAT_QUIET);
+        if (!is_array($stat))
+            // Non existent
+            return true;
+
+        // Directory
+        if ($stat['mode'] & 0040000) {
+            $this->logError(sprintf('Unlink should not be called on directories, use rmdir(%s)', $path));
+            return false;
+        }
+
         $request = new Request('DELETE', $this->stripProtocol($path), ['X-Auth-Token' => $this->store->getTokenId()]);
         
         try {
@@ -501,6 +525,8 @@ class SwiftStreamWrapper implements StreamWrapperInterface
                 return false;
             }
         }
+
+        $this->logger->debug(sprintf('unlink(%s): success', $this->stripProtocol($path)));
         
         return true;
     }
@@ -530,8 +556,7 @@ class SwiftStreamWrapper implements StreamWrapperInterface
     public function mkdir(string $path, int $mode, int $options): bool
     {
         if (preg_match('/^swift:\/\/[^\/]+[\/]*$/', $path)) {
-            // if container (swift://<container>/?) create container? TODO
-            
+            // Container (swift://<container>/?): should we create it? TODO
             return false;
         }
         try {
@@ -542,16 +567,18 @@ class SwiftStreamWrapper implements StreamWrapperInterface
 
             $resp = $this->getClient()->send($request);
         } catch (GuzzleException $e) {
+            $this->logger->error(sprintf('mkdir(%s, %d): %s', $path, $mode, $e->getMessage()));
             return false;
         }
+
+        $this->logger->debug(sprintf('mkdir(%s): success', $this->stripProtocol($path)));
 
         return true;
     }
     public function rmdir(string $path, int $options): bool
     {
         if (preg_match('/^swift:\/\/[^\/]+[\/]*$/', $path)) {
-            // if container (swift://<container>/?) delete container? TODO
-
+            // Container (swift://<container>/?): delete? TODO
             return false;
         }
 
@@ -566,17 +593,16 @@ class SwiftStreamWrapper implements StreamWrapperInterface
         }
         
         $request = new Request('DELETE', $this->stripProtocol($path), ['X-Auth-Token' => $this->store->getTokenId()]);
-
         try {
             $this->getClient()->send($request);
         } catch (GuzzleException $e) {
             if ($e->getCode() != 404) {
-                if ($this->reportErrors)
-                    trigger_error($e->getMessage(), E_ERROR);
-
+                $this->logger->error(sprintf('rmdir(%s): %s', $path, $e->getMessage()));
                 return false;
             }
         }
+
+        $this->logger->debug(sprintf('rmdir(%s): success', $this->stripProtocol($path)));
 
         return true;
     }
@@ -605,27 +631,13 @@ class SwiftStreamWrapper implements StreamWrapperInterface
             $this->getClient()->head($this->pathname);
         } catch (GuzzleException $e) {
             if ($this->reportErrors && $e->getCode() != 404) {
-                trigger_error($e->getMessage(), E_ERROR);
-                throw $e;
+                $this->logError(sprintf('Unable to check whether object %s exists: %s', $this->pathname, $e->getMessage()));
+                throw new StreamWrapperException(sprintf('Unable to check whether object %s exists: %s', $this->pathname, $e->getMessage()));
             }
 
             return false;
         }
 
-        return true;
-    }
-
-    private function existsPath(string $path): bool
-    {
-        try {
-            $this->getClient()->head($this->stripProtocol($path));
-        } catch (GuzzleException $e) {
-            if ($this->reportErrors && $e->getCode() != 404) {
-                trigger_error($e->getMessage(), E_ERROR);
-                throw $e;
-            }
-            return false;
-        }
         return true;
     }
 
@@ -640,16 +652,18 @@ class SwiftStreamWrapper implements StreamWrapperInterface
                 if ($e->getCode() == 404 && $create)
                     return $this->content = [];
 
-                if ($this->reportErrors)
-                    trigger_error($e->getMessage(), E_ERROR);
-
-                throw $e;
+                $this->logError(sprintf('Unable to fetch content for object %s: %s', $this->pathname, $e->getMessage()));
+                throw new StreamWrapperException(sprintf('Unable to fetch content for object %s: %s', $this->pathname, $e->getMessage()));
             }
         }
 
         return $this->content;
     }
 
+    /**
+     * @return int
+     * @throws StreamWrapperException
+     */
     private function getContentSize()
     {
         if (is_array($this->content))
@@ -661,10 +675,8 @@ class SwiftStreamWrapper implements StreamWrapperInterface
                 $response = $this->getClient()->send($request);
                 $this->contentSize = intval($response->getHeader('Content-Length')[0]);
             } catch (GuzzleException $e) {
-                if ($this->reportErrors)
-                    trigger_error($e->getMessage(), E_ERROR);
-
-                throw $e;
+                $this->logError(sprintf('Unable to retrieve size for object %s: %s', $this->pathname, $e->getMessage()));
+                throw new StreamWrapperException(sprintf('Unable to retrieve size for object %s: %s', $this->pathname, $e->getMessage()));
             }
         }
 
@@ -709,7 +721,13 @@ class SwiftStreamWrapper implements StreamWrapperInterface
 
     private function stripProtocol(string $path)
     {
-        return preg_replace('/\/{2,}/', '/', substr($path, strlen(self::getProtocol()) + 3));
+        return rtrim(preg_replace('/\/{2,}/', '/', substr($path, strlen(self::getProtocol()) + 3)), '/');
+    }
+
+    private function logError(string $message) {
+        if ($this->reportErrors)
+            trigger_error($message, E_ERROR);
+        $this->logger->error($message);
     }
 
     public function __call($name, $args){

@@ -8,6 +8,9 @@ use GuzzleHttp\Client;
 use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Psr7\Request;
 use GuzzleHttp\Psr7\Stream;
+use Monolog\Handler\ErrorLogHandler;
+use Monolog\Logger;
+use Psr\Log\LoggerInterface;
 
 /**
  * Class SwiftObjectStore
@@ -17,6 +20,9 @@ use GuzzleHttp\Psr7\Stream;
  */
 class SwiftObjectStore implements ObjectStoreInterface
 {
+    /** @var LoggerInterface */
+    protected $logger;
+
     /**
      * @var Token
      */
@@ -66,6 +72,11 @@ class SwiftObjectStore implements ObjectStoreInterface
 
         if (array_key_exists('container', $options))
             $this->setContainer($options['container']);
+
+        if (array_key_exists('logger', $options) && ($options['logger'] instanceof LoggerInterface))
+            $this->logger = $options['logger'];
+        else
+            $this->logger = new Logger('swift.object-store', [new ErrorLogHandler()]);
     }
 
     /**

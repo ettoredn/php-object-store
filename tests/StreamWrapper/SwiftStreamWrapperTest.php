@@ -125,14 +125,11 @@ class SwiftStreamWrapperTest extends \PHPUnit_Framework_TestCase
 
         fclose($h);
     }
-
-    /**
-     * @expectedException \EttoreDN\PHPObjectStorage\Exception\StreamWrapperException
-     */
+    
     public function testReadOnly() {
         $this->createFixture();
         $h = fopen(self::fixtureUrl, 'r');
-        fwrite($h, 'test');
+        $this->assertEquals(0, fwrite($h, 'test'));
         fclose($h);
     }
 
