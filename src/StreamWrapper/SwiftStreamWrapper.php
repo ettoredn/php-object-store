@@ -359,6 +359,10 @@ class SwiftStreamWrapper implements StreamWrapperInterface
 
     public function stream_close()
     {
+        // Invalidate cache
+        if (array_key_exists($this->pathname, self::$statCache))
+            unset(self::$statCache[$this->pathname]);
+        
         return;
     }
 
