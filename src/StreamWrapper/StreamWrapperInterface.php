@@ -20,7 +20,7 @@ interface StreamWrapperInterface
     public function stream_eof (): bool;
     public function stream_flush (): bool;
     public function stream_lock (int $operation): bool;
-    public function stream_metadata (string $path , int $option , mixed $value): bool;
+    public function stream_metadata (string $path , int $option , $value): bool;
     public function stream_open (string $path , string $mode , int $options , &$opened_path): bool;
     public function stream_read (int $count);
     public function stream_seek (int $offset , int $whence = SEEK_SET): bool;

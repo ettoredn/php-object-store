@@ -34,7 +34,6 @@ class SwiftStreamWrapperTest extends \PHPUnit_Framework_TestCase
         fclose($h);
     }
 
-
     public function testRegisterStreamWrapper() {
         $this->assertContains('swift', stream_get_wrappers(), 'swift:// protocol not registered');
     }
@@ -65,6 +64,11 @@ class SwiftStreamWrapperTest extends \PHPUnit_Framework_TestCase
         $this->assertEquals(4, fstat($h)['size'], 'Length expected to be 4 after being truncated');
         
         fclose($h);
+    }
+
+    public function testChmod(){
+        $this->createFixture();
+        $this->assertFalse(chmod(self::fixtureUrl, 0644));
     }
 
     public function testUrlStat() {

@@ -241,6 +241,8 @@ class SwiftStreamWrapper implements StreamWrapperInterface
         if (STREAM_REPORT_ERRORS & $options)
             $this->reportErrors = true;
 
+        $mode = str_replace(['b', 't'], '', $mode); // b = bullshit mode
+
         $stat = $this->url_stat($path, STREAM_URL_STAT_QUIET);
         if (is_array($stat) && ($stat['mode'] & 0040000)) {
             trigger_error(sprintf('Cannot fopen directory %s', $path));
@@ -254,26 +256,26 @@ class SwiftStreamWrapper implements StreamWrapperInterface
             $this->canRead = true;
             $this->pointer = 0;
         }
-        if ($mode === 'r+') {
+        else if ($mode === 'r+') {
             $this->getContentSize(); // Throws exception if the object does't exist
             $this->canRead = true;
             $this->canWrite = true;
             $this->pointer = 0;
         }
-        if ($mode === 'w') {
+        else if ($mode === 'w') {
             $this->unlink($path);
             $this->canWrite = true;
             $this->content = [];
             $this->pointer = 0;
         }
-        if ($mode === 'w+') {
+        else if ($mode === 'w+') {
             $this->unlink($path);
             $this->canRead = true;
             $this->canWrite = true;
             $this->content = [];
             $this->pointer = 0;
         }
-        if ($mode === 'a') {
+        else if ($mode === 'a') {
             $this->getContent(true);
             $this->canRead = true;
             $this->pointer = $this->getContentSize();
@@ -282,7 +284,7 @@ class SwiftStreamWrapper implements StreamWrapperInterface
             // ===> If the file does not exist, attempt to create it.
             // ===> In this mode, fseek() has no effect, writes are always appended.
         }
-        if ($mode === 'a+') {
+        else if ($mode === 'a+') {
             $this->getContent(true);
             $this->canRead = true;
             $this->canWrite = true;
@@ -295,7 +297,7 @@ class SwiftStreamWrapper implements StreamWrapperInterface
             // ===> In this mode, fseek() only affects the reading position, writes are always appended.
 
         }
-        if ($mode === 'x') {
+        else if ($mode === 'x') {
             if ($this->exists()) {
                 trigger_error(sprintf('Object %s does not exist', $path), E_WARNING);
                 return false;
@@ -304,7 +306,7 @@ class SwiftStreamWrapper implements StreamWrapperInterface
             $this->content = [];
             $this->pointer = 0;
         }
-        if ($mode === 'x+') {
+        else if ($mode === 'x+') {
             if ($this->exists()) {
                 trigger_error(sprintf('Object %s does not exist', $path), E_WARNING);
                 return false;
@@ -314,14 +316,12 @@ class SwiftStreamWrapper implements StreamWrapperInterface
             $this->content = [];
             $this->pointer = 0;
         }
-
-        if ($mode === 'c') {
+        else if ($mode === 'c') {
             $this->getContent(true);
             $this->canWrite = true;
             $this->pointer = 0;
         }
-
-        if ($mode === 'c+') {
+        else if ($mode === 'c+') {
             $this->getContent(true);
             $this->canRead = true;
             $this->canWrite = true;
@@ -519,9 +519,9 @@ class SwiftStreamWrapper implements StreamWrapperInterface
     {
         return false;
     }
-    public function stream_metadata(string $path, int $option, mixed $value): bool
+    public function stream_metadata(string $path, int $option, $value): bool
     {
-        return true;
+        return false;
     }
     public function stream_set_option(int $option, int $arg1, int $arg2): bool
     {
@@ -709,7 +709,7 @@ class SwiftStreamWrapper implements StreamWrapperInterface
 
     private function stripProtocol(string $path)
     {
-        return substr($path, strlen(self::getProtocol()) + 3);
+        return preg_replace('/\/{2,}/', '/', substr($path, strlen(self::getProtocol()) + 3));
     }
 
     public function __call($name, $args){
