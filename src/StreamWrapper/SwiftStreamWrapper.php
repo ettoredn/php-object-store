@@ -111,6 +111,8 @@ class SwiftStreamWrapper implements StreamWrapperInterface
             $this->logger = new Logger('swift.stream-wrapper', [new ErrorLogHandler()]);
         
         $this->store = ObjectStorage::getInstance(SwiftObjectStore::class, self::$options);
+
+        $this->logger->debug('__construct');
     }
 
     public function __destruct()
@@ -127,6 +129,7 @@ class SwiftStreamWrapper implements StreamWrapperInterface
     //======== Potentially frequently called operations that require performance
 
     private $readRequests = 0;
+    private static $cache8k = [];
     /**
      * @param int $count
      * @return string
@@ -139,20 +142,31 @@ class SwiftStreamWrapper implements StreamWrapperInterface
             return false;
         }
 
-        $this->logger->debug(sprintf('read(%s): range=%d,%d', $this->pathname, $this->pointer, $this->pointer + $count - 1));
+        $this->logger->debug(sprintf('read(%s): %d bytes range=%d,%d', $this->pathname, $count, $this->pointer, $this->pointer + $count - 1));
+
+        if (array_key_exists($this->pathname, self::$cache8k) && $this->pointer + $count <= 8192) {
+            $args = array_slice(self::$cache8k[$this->pathname], $this->pointer, $count);
+            array_unshift($args, 'C*');
+            $binaryString = call_user_func_array('pack', $args);
+
+            $this->pointer += count($args) - 1;
+
+            return $binaryString;
+        }
+
+        if (++$this->readRequests > 2)
+            $this->getContent();
 
         if (is_array($this->content)) {
-            if (count($this->content) < $this->pointer)
-                return array_slice($this->content, $this->pointer, $count);
+            $args = array_slice($this->content, $this->pointer, $count);
+            array_unshift($args, 'C*');
+            $binaryString = call_user_func_array('pack', $args);
+
+            $this->pointer += count($args) - 1;
+            return $binaryString;
         }
 
-        if (++$this->readRequests > 3) {
-            // Fetch the damn think..
-
-
-
-        }
-
+        // Fetch the whole thing
         $request = new Request('GET', $this->pathname, [
             'X-Auth-Token' => $this->store->getTokenId(),
             'Range' => sprintf('bytes=%d-%d', $this->pointer, $this->pointer + $count-1)
@@ -162,13 +176,19 @@ class SwiftStreamWrapper implements StreamWrapperInterface
             $body = $response->getBody();
 
             $data = $response->getBody()->getContents();
-            $this->pointer += $body->getSize();
-
-            return $data;
         } catch (GuzzleException $e) {
             $this->logError($e->getMessage());
             return '';
         }
+
+        $this->pointer += $body->getSize();
+
+        if ($this->pointer >= 8192 && !array_key_exists($this->pathname, self::$cache8k))
+        {
+            self::$cache8k[$this->pathname] = array_slice(unpack('C*', $data), 0, 8191);
+        }
+
+        return $data;
     }
 
     /**
@@ -233,6 +253,8 @@ class SwiftStreamWrapper implements StreamWrapperInterface
             return 0;
         }
 
+        $this->logger->debug(sprintf('flush(%s)', $this->pathname));
+
         try {
             $args = $this->getContent();
             array_unshift($args, 'C*');
@@ -252,7 +274,7 @@ class SwiftStreamWrapper implements StreamWrapperInterface
         // Invalidate cache
         if (array_key_exists($this->pathname, self::$statCache))
             unset(self::$statCache[$this->pathname]);
-        
+
         return true;
     }
 
@@ -438,7 +460,7 @@ class SwiftStreamWrapper implements StreamWrapperInterface
              */
             return false;
 
-        if (array_key_exists($path, self::$statCache) && time() - self::$statCache[$path]['age'] < 60)
+        if (array_key_exists($path, self::$statCache) && time())
             return self::$statCache[$path]['stat'];
 
         $stat = [];
