@@ -126,6 +126,7 @@ class SwiftStreamWrapper implements StreamWrapperInterface
 
     //======== Potentially frequently called operations that require performance
 
+    private $readRequests = 0;
     /**
      * @param int $count
      * @return string
@@ -136,6 +137,20 @@ class SwiftStreamWrapper implements StreamWrapperInterface
         if (!$this->canRead) {
             $this->logError(sprintf('Cannot read object %s as it was opened in read only mode', $this->pathname));
             return false;
+        }
+
+        $this->logger->debug(sprintf('read(%s): range=%d,%d', $this->pathname, $this->pointer, $this->pointer + $count - 1));
+
+        if (is_array($this->content)) {
+            if (count($this->content) < $this->pointer)
+                return array_slice($this->content, $this->pointer, $count);
+        }
+
+        if (++$this->readRequests > 3) {
+            // Fetch the damn think..
+
+
+
         }
 
         $request = new Request('GET', $this->pathname, [
@@ -152,7 +167,7 @@ class SwiftStreamWrapper implements StreamWrapperInterface
             return $data;
         } catch (GuzzleException $e) {
             $this->logError($e->getMessage());
-            return false;
+            return '';
         }
     }
 
@@ -376,6 +391,8 @@ class SwiftStreamWrapper implements StreamWrapperInterface
         return $stat;
     }
 
+    private static $statCache = [];
+
     /**
      * This method is called in response to all stat() related functions.
      * See http://man7.org/linux/man-pages/man2/stat.2.html .
@@ -388,6 +405,7 @@ class SwiftStreamWrapper implements StreamWrapperInterface
      */
     public function url_stat(string $path, int $flags)
     {
+        $path = $this->stripProtocol($path);
 //        $stat = [];
 //        $stat[0] = $stat['dev'] = 0;
 //        $stat[1] = $stat['ino'] = 0;
@@ -416,6 +434,9 @@ class SwiftStreamWrapper implements StreamWrapperInterface
              */
             return false;
 
+        if (array_key_exists($path, self::$statCache) && time() - self::$statCache[$path]['age'] < 60)
+            return self::$statCache[$path]['stat'];
+
         $stat = [];
         $stat[0] = $stat['dev'] = 0;
         $stat[1] = $stat['ino'] = 0;
@@ -432,7 +453,7 @@ class SwiftStreamWrapper implements StreamWrapperInterface
         $stat[11] = $stat['blksize'] = 0;
         $stat[12] = $stat['blocks'] = 0;
 
-        $request = new Request('HEAD', $this->stripProtocol($path), ['X-Auth-Token' => $this->store->getTokenId()]);
+        $request = new Request('HEAD', $path, ['X-Auth-Token' => $this->store->getTokenId()]);
         try {
             $response = $this->getClient()->send($request);
 
@@ -460,12 +481,14 @@ class SwiftStreamWrapper implements StreamWrapperInterface
                  * you are responsible for reporting errors using the trigger_error() function during stating
                  * of the path.
                  */
-                $this->logError(sprintf('Unable to fetch metadata for object %s: %s', $this->stripProtocol($path), $e->getMessage()));
+                $this->logError(sprintf('Unable to fetch metadata for object %s: %s', $path, $e->getMessage()));
 
             return false;
         }
 
-        $this->logger->debug(sprintf('url_stat(%s, %d)', $this->stripProtocol($path), $flags), $stat);
+        $this->logger->debug(sprintf('url_stat(%s, %d)', $path, $flags), $stat);
+
+        self::$statCache[$path] = ['age' => time(), 'stat' => $stat];
 
         return $stat;
     }
