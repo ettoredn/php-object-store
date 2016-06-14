@@ -114,6 +114,10 @@ class SwiftStreamWrapperTest extends \PHPUnit_Framework_TestCase
         fwrite($h, 'test');
         fclose($h);
     }
-
-
+    
+    public function testDirectory() {
+        $this->assertFalse(is_dir('swift://whatever/ends/with/'));
+        $this->assertFalse(mkdir('swift://dir'));
+        $this->assertFalse(rmdir('swift://dir'));
+    }
 }

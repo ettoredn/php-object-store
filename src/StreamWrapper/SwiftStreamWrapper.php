@@ -512,6 +512,15 @@ class SwiftStreamWrapper implements StreamWrapperInterface
     {
         return false;
     }
+    public function mkdir(string $path, int $mode, int $options): bool
+    {
+        return false;
+    }
+    public function rmdir(string $path, int $options): bool
+    {
+        return false;
+    }
+
 
     //============== Helpers
 
@@ -646,5 +655,4 @@ class SwiftStreamWrapper implements StreamWrapperInterface
     public function __call($name, $args){
         throw new StreamWrapperException(sprintf('Method %s does not exist', $name));
     }
-
 }

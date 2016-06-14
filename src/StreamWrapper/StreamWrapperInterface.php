@@ -11,9 +11,8 @@ interface StreamWrapperInterface
 //    public function dir_opendir ( string $path , int $options ): bool;
 //    public string dir_readdir ( void )
 //    public bool dir_rewinddir ( void )
-//    public bool mkdir ( string $path , int $mode , int $options )
-    public function rename( string $path_from , string $path_to): bool;
-//    public bool rmdir ( string $path , int $options )
+    public function mkdir (string $path, int $mode, int $options): bool;
+    public function rmdir (string $path, int $options): bool;
     
     /* File operations */
     public function stream_cast (int $cast_as);
@@ -30,6 +29,8 @@ interface StreamWrapperInterface
     public function stream_tell (): int;
     public function stream_truncate (int $new_size):bool;
     public function stream_write (string $data): int;
+    
+    public function rename (string $path_from, string $path_to): bool;
     public function unlink (string $path): bool;
     public function url_stat (string $path , int $flags);
 }
