@@ -244,12 +244,16 @@ class SwiftStreamWrapper implements StreamWrapperInterface
             ], $binaryString);
 
             $this->getClient()->send($request);
-
-            return true;
         } catch (GuzzleException $e) {
             $this->logError($e->getMessage());
             return false;
         }
+
+        // Invalidate cache
+        if (array_key_exists($this->pathname, self::$statCache))
+            unset(self::$statCache[$this->pathname]);
+        
+        return true;
     }
 
 
@@ -359,10 +363,6 @@ class SwiftStreamWrapper implements StreamWrapperInterface
 
     public function stream_close()
     {
-        // Invalidate cache
-        if (array_key_exists($this->pathname, self::$statCache))
-            unset(self::$statCache[$this->pathname]);
-        
         return;
     }
 
