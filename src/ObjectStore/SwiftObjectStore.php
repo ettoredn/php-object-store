@@ -243,11 +243,11 @@ class SwiftObjectStore implements ObjectStoreInterface
         $client = new Client();
 
         $response = $client->get($this->options['authUrl']);
-        $response = \GuzzleHttp\json_decode($response->getBody());
+        $response = \GuzzleHttp\json_decode($response->getBody(), true);
 
-        foreach ($response->versions->values as $version)
-            if ($version->id == $this->options['authVersion'])
-                $endpoint = $version->links[0]->href;
+        foreach ($response['versions']['values'] as $version)
+            if ($version['id'] == $this->options['authVersion'])
+                $endpoint = $version['links'][0]['href'];
 
         if (empty($endpoint))
             throw new ObjectStoreException('Cannot determine authentication endpoint');
@@ -263,20 +263,20 @@ class SwiftObjectStore implements ObjectStoreInterface
                     ]
                 ]
             ]));
-            $response = \GuzzleHttp\json_decode($client->send($request)->getBody());
+            $response = \GuzzleHttp\json_decode($client->send($request)->getBody(), true);
 
             // Retrieves the token
             $this->token = new SwiftToken(
-                $response->access->token->id,
-                new \DateTimeImmutable($response->access->token->expires));
+                $response['access']['token']['id'],
+                new \DateTimeImmutable($response['access']['token']['expires']));
 
             // Retrieves the endpoint of the object store from the catalog
             $this->endpoint = null;
-            foreach ($response->access->serviceCatalog as $catalogEntry) {
-                if ($catalogEntry->type == 'object-store' && $catalogEntry->name == 'swift')
-                    foreach ($catalogEntry->endpoints as $endpoint)
-                        if ($endpoint->region == $this->options['region'])
-                            $this->endpoint = $endpoint->publicURL;
+            foreach ($response['access']['serviceCatalog'] as $catalogEntry) {
+                if ($catalogEntry['type'] == 'object-store' && $catalogEntry['name'] == 'swift')
+                    foreach ($catalogEntry['endpoints'] as $endpoint)
+                        if ($endpoint['region'] == $this->options['region'])
+                            $this->endpoint = $endpoint['publicURL'];
             }
             if (!$this->endpoint)
                 throw new ObjectStoreException('Unable to find object store URL from the catalog: '. json_encode($response));
