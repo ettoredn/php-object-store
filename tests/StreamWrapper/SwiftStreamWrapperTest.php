@@ -38,6 +38,13 @@ class SwiftStreamWrapperTest extends \PHPUnit_Framework_TestCase
         $this->assertContains('swift', stream_get_wrappers(), 'swift:// protocol not registered');
     }
 
+    public function testSeek() {
+        $h = fopen(self::fixtureUrl, 'r');
+        $this->assertEquals(0, fseek($h, 0, SEEK_END));
+        $this->assertTrue(feof($h));
+        fclose($h);
+    }
+
     public function testContainerPath() {
         $this->assertTrue(is_dir(self::fixtureContainer));
         $this->assertFalse(is_file(self::fixtureContainer));
@@ -125,7 +132,7 @@ class SwiftStreamWrapperTest extends \PHPUnit_Framework_TestCase
 
         fclose($h);
     }
-    
+
     public function testReadOnly() {
         $this->createFixture();
         $h = fopen(self::fixtureUrl, 'r');

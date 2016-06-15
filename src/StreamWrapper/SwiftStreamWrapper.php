@@ -126,10 +126,10 @@ class SwiftStreamWrapper implements StreamWrapperInterface
     }
 
 
-    //======== Potentially frequently called operations that require performance
+    //======== Frequently called operations that require performance
 
     private $readRequests = 0;
-    private static $cache8k = [];
+    private static $cache8k = []; // http://php.net/manual/en/function.stream-set-read-buffer.php
     /**
      * @param int $count
      * @return string
@@ -155,6 +155,7 @@ class SwiftStreamWrapper implements StreamWrapperInterface
         }
 
         if (++$this->readRequests > 2)
+            // Fetch the whole thing
             $this->getContent();
 
         if (is_array($this->content)) {
@@ -166,7 +167,6 @@ class SwiftStreamWrapper implements StreamWrapperInterface
             return $binaryString;
         }
 
-        // Fetch the whole thing
         $request = new Request('GET', $this->pathname, [
             'X-Auth-Token' => $this->store->getTokenId(),
             'Range' => sprintf('bytes=%d-%d', $this->pointer, $this->pointer + $count-1)
@@ -226,8 +226,10 @@ class SwiftStreamWrapper implements StreamWrapperInterface
         if ($this->mode == 'a')
             return true;
 
-        if ($whence == SEEK_END)
-            throw new StreamWrapperException('NOT IMPLEMENTED');
+        if ($whence == SEEK_END) {
+            $this->pointer = $this->getContentSize();
+            $this->pointer += $offset;
+        }
 
         if (is_resource($this->content)) {
             fseek($this->content, $offset, $whence);
@@ -276,6 +278,108 @@ class SwiftStreamWrapper implements StreamWrapperInterface
             unset(self::$statCache[$this->pathname]);
 
         return true;
+    }
+
+    private static $statCache = [];
+
+    /**
+     * This method is called in response to all stat() related functions.
+     * See http://man7.org/linux/man-pages/man2/stat.2.html .
+     *
+     * @param string $path
+     * @param int $flags
+     * @return array|false
+     * @throws GuzzleException
+     * @throws StreamWrapperException
+     */
+    public function url_stat(string $path, int $flags)
+    {
+        $path = $this->stripProtocol($path);
+//        $stat = [];
+//        $stat[0] = $stat['dev'] = 0;
+//        $stat[1] = $stat['ino'] = 0;
+//        $stat[2] = $stat['mode'] = 010 << 12 | 0666; // Regular file rw-rw-r--
+//        $stat[3] = $stat['nlink'] = 0;
+//        $stat[4] = $stat['uid'] = 0;
+//        $stat[5] = $stat['gid'] = 0;
+//        $stat[6] = $stat['rdev'] = 0;
+//        $stat[7] = $stat['size'] = 0;
+//        $stat[8] = $stat['atime'] = 0;
+//        $stat[9] = $stat['mtime'] = 0;
+//        $stat[10] = $stat['ctime'] = 0;
+//        $stat[11] = $stat['blksize'] = 0;
+//        $stat[12] = $stat['blocks'] = 0;
+//
+//        if (substr($path, 0, 11) == 'swift://is_')
+//            return $stat;
+
+        if (STREAM_URL_STAT_LINK & $flags)
+            /*
+             * For resources with the ability to link to other resource
+             * (such as an HTTP Location: forward, or a filesystem symlink).
+             * This flag specified that only information about the link itself
+             * should be returned, not the resource pointed to by the link.
+             * This flag is set in response to calls to lstat(), is_link(), or filetype().
+             */
+            return false;
+
+        if (array_key_exists($path, self::$statCache))
+            return self::$statCache[$path]['stat'];
+
+        $stat = [];
+        $stat[0] = $stat['dev'] = 0;
+        $stat[1] = $stat['ino'] = 0;
+        // o+w is needed otherwise is_writable() returns false.
+        $stat[2] = $stat['mode'] = 010 << 12 | 0666; // Regular file rw-rw-rw-
+        $stat[3] = $stat['nlink'] = 0;
+        $stat[4] = $stat['uid'] = 0;
+        $stat[5] = $stat['gid'] = 0;
+        $stat[6] = $stat['rdev'] = 0;
+        $stat[7] = $stat['size'] = 0;
+        $stat[8] = $stat['atime'] = 0;
+        $stat[9] = $stat['mtime'] = 0;
+        $stat[10] = $stat['ctime'] = 0;
+        $stat[11] = $stat['blksize'] = 0;
+        $stat[12] = $stat['blocks'] = 0;
+
+        $request = new Request('HEAD', $path, ['X-Auth-Token' => $this->store->getTokenId()]);
+        try {
+            $response = $this->getClient()->send($request);
+
+            $stat['ctime'] = $stat[10] = intval($response->getHeader('X-Timestamp')[0]);
+            $stat['size'] = $stat[7] = intval($response->getHeader('Content-Length')[0]);
+
+            if ($response->hasHeader('X-Container-Object-Count')) {
+                // $path = swift://<container>
+                $stat[2] = $stat['mode'] |= 0111; // ugo+x
+                $stat[2] = $stat['mode'] = ($stat['mode'] & ~( 0170000 )) | 0040000; // Directory
+            } else if ($response->hasHeader('X-Object-Meta-Directory')) {
+                // Directory created with mkdir()
+                $stat['mtime'] = $stat[9] = strtotime($response->getHeader('Last-Modified')[0]);
+
+                $stat[2] = $stat['mode'] |= 0111; // ugo+x
+                $stat[2] = $stat['mode'] = ($stat['mode'] & ~( 0170000 )) | 0040000; // Directory
+            } else {
+                // Object aka file
+                $stat['mtime'] = $stat[9] = strtotime($response->getHeader('Last-Modified')[0]);
+            }
+        } catch (GuzzleException $e) {
+            if (!($flags & STREAM_URL_STAT_QUIET))
+                /*
+                 * If this flag is set, your wrapper should not raise any errors. If this flag is not set,
+                 * you are responsible for reporting errors using the trigger_error() function during stating
+                 * of the path.
+                 */
+                $this->logError(sprintf('Unable to fetch metadata for object %s: %s', $path, $e->getMessage()));
+
+            return false;
+        }
+
+        $this->logger->debug(sprintf('url_stat(%s, %d)', $path, $flags), $stat);
+
+        self::$statCache[$path] = ['age' => time(), 'stat' => $stat];
+
+        return $stat;
     }
 
 
@@ -413,108 +517,6 @@ class SwiftStreamWrapper implements StreamWrapperInterface
         $stat[12] = $stat['blocks'] = 0;
 
         $this->logger->debug(sprintf('stat(%s)', $this->pathname), $stat);
-
-        return $stat;
-    }
-
-    private static $statCache = [];
-
-    /**
-     * This method is called in response to all stat() related functions.
-     * See http://man7.org/linux/man-pages/man2/stat.2.html .
-     *
-     * @param string $path
-     * @param int $flags
-     * @return array|false
-     * @throws GuzzleException
-     * @throws StreamWrapperException
-     */
-    public function url_stat(string $path, int $flags)
-    {
-        $path = $this->stripProtocol($path);
-//        $stat = [];
-//        $stat[0] = $stat['dev'] = 0;
-//        $stat[1] = $stat['ino'] = 0;
-//        $stat[2] = $stat['mode'] = 010 << 12 | 0666; // Regular file rw-rw-r--
-//        $stat[3] = $stat['nlink'] = 0;
-//        $stat[4] = $stat['uid'] = 0;
-//        $stat[5] = $stat['gid'] = 0;
-//        $stat[6] = $stat['rdev'] = 0;
-//        $stat[7] = $stat['size'] = 0;
-//        $stat[8] = $stat['atime'] = 0;
-//        $stat[9] = $stat['mtime'] = 0;
-//        $stat[10] = $stat['ctime'] = 0;
-//        $stat[11] = $stat['blksize'] = 0;
-//        $stat[12] = $stat['blocks'] = 0;
-//
-//        if (substr($path, 0, 11) == 'swift://is_')
-//            return $stat;
-
-        if (STREAM_URL_STAT_LINK & $flags)
-            /*
-             * For resources with the ability to link to other resource
-             * (such as an HTTP Location: forward, or a filesystem symlink).
-             * This flag specified that only information about the link itself
-             * should be returned, not the resource pointed to by the link.
-             * This flag is set in response to calls to lstat(), is_link(), or filetype().
-             */
-            return false;
-
-        if (array_key_exists($path, self::$statCache) && time())
-            return self::$statCache[$path]['stat'];
-
-        $stat = [];
-        $stat[0] = $stat['dev'] = 0;
-        $stat[1] = $stat['ino'] = 0;
-        // o+w is needed otherwise is_writable() returns false.
-        $stat[2] = $stat['mode'] = 010 << 12 | 0666; // Regular file rw-rw-rw-
-        $stat[3] = $stat['nlink'] = 0;
-        $stat[4] = $stat['uid'] = 0;
-        $stat[5] = $stat['gid'] = 0;
-        $stat[6] = $stat['rdev'] = 0;
-        $stat[7] = $stat['size'] = 0;
-        $stat[8] = $stat['atime'] = 0;
-        $stat[9] = $stat['mtime'] = 0;
-        $stat[10] = $stat['ctime'] = 0;
-        $stat[11] = $stat['blksize'] = 0;
-        $stat[12] = $stat['blocks'] = 0;
-
-        $request = new Request('HEAD', $path, ['X-Auth-Token' => $this->store->getTokenId()]);
-        try {
-            $response = $this->getClient()->send($request);
-
-            $stat['ctime'] = $stat[10] = intval($response->getHeader('X-Timestamp')[0]);
-            $stat['size'] = $stat[7] = intval($response->getHeader('Content-Length')[0]);
-
-            if ($response->hasHeader('X-Container-Object-Count')) {
-                // $path = swift://<container>
-                $stat[2] = $stat['mode'] |= 0111; // ugo+x
-                $stat[2] = $stat['mode'] = ($stat['mode'] & ~( 0170000 )) | 0040000; // Directory
-            } else if ($response->hasHeader('X-Object-Meta-Directory')) {
-                // Directory created with mkdir()
-                $stat['mtime'] = $stat[9] = strtotime($response->getHeader('Last-Modified')[0]);
-
-                $stat[2] = $stat['mode'] |= 0111; // ugo+x
-                $stat[2] = $stat['mode'] = ($stat['mode'] & ~( 0170000 )) | 0040000; // Directory
-            } else {
-                // Object aka file
-                $stat['mtime'] = $stat[9] = strtotime($response->getHeader('Last-Modified')[0]);
-            }
-        } catch (GuzzleException $e) {
-            if (!($flags & STREAM_URL_STAT_QUIET))
-                /*
-                 * If this flag is set, your wrapper should not raise any errors. If this flag is not set,
-                 * you are responsible for reporting errors using the trigger_error() function during stating
-                 * of the path.
-                 */
-                $this->logError(sprintf('Unable to fetch metadata for object %s: %s', $path, $e->getMessage()));
-
-            return false;
-        }
-
-        $this->logger->debug(sprintf('url_stat(%s, %d)', $path, $flags), $stat);
-
-        self::$statCache[$path] = ['age' => time(), 'stat' => $stat];
 
         return $stat;
     }

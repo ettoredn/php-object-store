@@ -22,8 +22,6 @@ class ObjectStorage
      * @param array $options
      * @return ObjectStoreInterface
      * @throws ObjectStorageException
-     *
-     * TODO no singletons, count instances
      */
     public static function getInstance($class, array $options = []): ObjectStoreInterface
     {
